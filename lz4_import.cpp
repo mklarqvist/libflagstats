@@ -497,10 +497,10 @@ int lz4_decompress(const std::string& file) {
     auto time_span = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
     std::cerr << "[LZ4 " << file << "] Time elapsed " << time_span.count() << " ms " << tot_flags << std::endl;
 
-    std::cerr << "Tot flags=" << tot_flags << std::endl;
-    for (int i = 0; i < 12; ++i) {
-        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
-    }
+    // std::cerr << "Tot flags=" << tot_flags << std::endl;
+    // for (int i = 0; i < 12; ++i) {
+    //     std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
+    // }
 
     delete[] buffer;
     delete[] out_buffer;
@@ -674,7 +674,7 @@ int lz4_decompress_samtools(const std::string& file) {
     // }
 
     // s = bam_flagstat_core(fp, header);
-    if (1) {
+    if (0) {
         char b0[16], b1[16];
         printf("%lld + %lld in total (QC-passed reads + QC-failed reads)\n", s->n_reads[0], s->n_reads[1]);
         printf("%lld + %lld secondary\n", s->n_secondary[0], s->n_secondary[1]);
@@ -691,6 +691,46 @@ int lz4_decompress_samtools(const std::string& file) {
         // printf("%lld + %lld with mate mapped to a different chr (mapQ>=5)\n", s->n_diffhigh[0], s->n_diffhigh[1]);
     }
     free(s);
+
+    return 1;
+}
+
+int zstd_decompress_only(const std::string& file) {
+    std::ifstream f(file, std::ios::in | std::ios::binary | std::ios::ate);
+    if (f.good() == false) return 0;
+    int64_t filesize = f.tellg();
+    f.seekg(0);
+    uint8_t buffer[1024000]; // 512k 16-bit ints 
+    uint8_t out_buffer[1024000];
+
+    int32_t uncompresed_size, compressed_size;
+    uint64_t tot_flags = 0; 
+    
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+
+    while (f.good()) {
+        f.read((char*)&uncompresed_size, sizeof(int32_t));
+        f.read((char*)&compressed_size, sizeof(int32_t));
+        f.read((char*)buffer, compressed_size);
+
+        const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
+        // assert(decompressed_size == uncompresed_size);
+
+        const uint32_t N = uncompresed_size >> 1;
+        tot_flags += N;
+
+        // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+        if (f.tellg() == filesize) break;
+    }
+
+    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+    auto time_span = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+    std::cerr << "[ZSTD " << file << "] Time elapsed " << time_span.count() << " ms " << tot_flags << std::endl;
+
+    // std::cerr << "Tot flags=" << tot_flags << std::endl;
+    // for (int i = 0; i < 12; ++i) {
+    //     std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
+    // }
 
     return 1;
 }
@@ -797,26 +837,28 @@ int zstd_decompress_samtools(const std::string& file) {
 // samtools count flagstat different:
 // https://github.com/samtools/samtools/blob/master/bam_stat.c#L47
 int main(int argc, char** argv) {
-    // lz4("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin");
-    // lz4hc("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin");
+    // lz4("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin");
+    // lz4hc("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin");
 
-    for (int i = 1; i < 10; ++i) {
-        lz4hc("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin", i);
-    }
+    // for (int i = 1; i < 10; ++i) {
+    //     lz4hc("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", i);
+    // }
 
-    for (int i = 2; i < 11; ++i) {
-        lz4f("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin", i);
-    }
+    // for (int i = 2; i < 11; ++i) {
+    //     lz4f("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", i);
+    // }
 
-    for (int i = 1; i < 21; ++i) {
-        zstd("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin", i);
-    }
+    // for (int i = 1; i < 21; ++i) {
+    //     zstd("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", i);
+    // }
 
-    // zstd("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin", 1);
+    // zstd("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", 1);
     // lz4_decompress("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_flag_API_HC.bin.lz4");
     
     for (int i = 1; i < 10; ++i) {
-        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin_HC_c" + std::to_string(i) + ".lz4";
+        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c" + std::to_string(i) + ".lz4";
+        clear_cache();
+        lz4_decompress_only(file); // warmup
         clear_cache();
         lz4_decompress_only(file);
         clear_cache();
@@ -826,7 +868,9 @@ int main(int argc, char** argv) {
     }
 
     for (int i = 2; i < 11; ++i) {
-        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin_fast_a" + std::to_string(i) + ".lz4";
+        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a" + std::to_string(i) + ".lz4";
+        clear_cache();
+        lz4_decompress_only(file); // warmup
         clear_cache();
         lz4_decompress_only(file);
         clear_cache();
@@ -836,7 +880,11 @@ int main(int argc, char** argv) {
     }
 
     for (int i = 1; i < 21; ++i) {
-        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R1_GRCh37_flags.bin_c" + std::to_string(i) + ".zst";
+        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_c" + std::to_string(i) + ".zst";
+        clear_cache();
+        zstd_decompress_only(file); // warmup
+        clear_cache();
+        zstd_decompress_only(file);
         clear_cache();
         zstd_decompress_samtools(file);
         clear_cache();

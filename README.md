@@ -1,6 +1,7 @@
 # FlagStats
 
 These functions compute the summary statistics for the SAM FLAG field (flagstat) using fast SIMD instructions. They are based on the [positional-popcount](https://github.com/mklarqvist/positional-popcount) (`pospopcnt`) subroutines and assumes that data is available as contiguous streams (e.g. column projection). In this example, we use block sizes of 512k records (1 MB).
+Currently, this example requires AVX-256 but is easily rewritten to support any instruction set.
 
 ## Speedup
 

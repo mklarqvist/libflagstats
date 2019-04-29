@@ -882,7 +882,7 @@ int zstd_decompress(const std::string& file) {
 
     int32_t uncompresed_size, compressed_size;
 
-    uint32_t counters[16] = {0}; // flags
+    uint32_t counters[16*2] = {0}; // flags
     uint64_t tot_flags = 0;
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
@@ -897,7 +897,8 @@ int zstd_decompress(const std::string& file) {
 
         const uint32_t N = uncompresed_size >> 1;
         tot_flags += N;
-        pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+        // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+        pospopcnt_u16_avx2_harley_seal_internal((uint16_t*)out_buffer,N,counters);
 
         // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
         if (f.tellg() == filesize) break;

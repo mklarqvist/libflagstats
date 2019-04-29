@@ -22,7 +22,24 @@ CPPFLAGS   = -std=c++0x $(OPTFLAGS) $(DEBUG_FLAGS)
 CPP_SOURCE = lz4_import.cpp
 C_SOURCE   = 
 OBJECTS    = $(CPP_SOURCE:.cpp=.o) $(C_SOURCE:.c=.o)
-POSPOPCNT  := /home/mdrk/repos/FastFlagStats
+
+POSPOPCNT_PATH  := positional-popcount
+LZ4_PATH :=
+ZSTD_PATH :=
+INCLUDE_PATHS :=
+LIBRARY_PATHS :=
+ifneq ($(LZ4_PATH),)
+	INCLUDE_PATHS += -I$(LZ4_PATH)/include
+	LIBRARY_PATHS += -L$(LZ4_PATH)/lib
+endif
+ifneq ($(ZSTD_PATH),)
+	INCLUDE_PATHS += -I$(ZSTD_PATH)/include
+	LIBRARY_PATHS += -L$(ZSTD_PATH)/lib
+endif
+
+# dedup
+INCLUDE_PATHS := $(sort $(INCLUDE_PATHS))
+LIBRARY_PATHS := $(sort $(LIBRARY_PATHS))
 
 # Default target
 all: flagstats
@@ -34,14 +51,14 @@ all: flagstats
 %.o: %.cpp
 	$(CXX) $(CPPFLAGS) -c -o $@ $<
 
-pospopcnt.o: $(POSPOPCNT)/pospopcnt.c
+pospopcnt.o: $(POSPOPCNT_PATH)/pospopcnt.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-lz4_import.o: lz4_import.cpp $(POSPOPCNT)/pospopcnt.c
-	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT) -c -o $@ $<
+lz4_import.o: lz4_import.cpp $(POSPOPCNT_PATH)/pospopcnt.c
+	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) -c -o $@ $<
 
 flagstats: lz4_import.o pospopcnt.o
-	$(CXX) $(CPPFLAGS) lz4_import.o pospopcnt.o -I$(POSPOPCNT) -o flagstats -llz4 -lzstd
+	$(CXX) $(CPPFLAGS) lz4_import.o pospopcnt.o -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) $(LIBRARY_PATHS) -o flagstats -llz4 -lzstd
 
 clean:
 	rm -f $(OBJECTS)

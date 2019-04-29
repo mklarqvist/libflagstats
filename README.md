@@ -1,10 +1,10 @@
 # FlagStats
 
-These functions compute the summary statistics for the SAM FLAG field (flagstat) using fast SIMD instructions. These functions use a modified [positional-popcount](https://github.com/mklarqvist/positional-popcount) subroutine that assumes that data is available as contiguous streams (e.g. column projection).
+These functions compute the summary statistics for the SAM FLAG field (flagstat) using fast SIMD instructions. They are based on the [positional-popcount](https://github.com/mklarqvist/positional-popcount) (`pospopcnt`) subroutines and assumes that data is available as contiguous streams (e.g. column projection). In this example, we use block sizes of 512k records (1 MB).
 
 ## Speedup
 
-This benchmark shows the speedup of the pospopcnt algorithms used on x86 CPUs compared to samtools using a human HiSeqX readset with 824,541,892 reads. See [Results](#results) for additional information. On a represenative readset (see [Results](#results)), these functions are 2562.4-fold faster compared to BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not have column projection capabilities. Around 80% of the CPU time spent is retrieving data from disk.
+This benchmark shows the speedup of the pospopcnt algorithms compared to [samtools](https://github.com/samtools/samtools) using a human HiSeqX readset with 824,541,892 reads. See [Results](#results) for additional information. On this readset, the pospopcnt-based functions are 2562.4-fold faster compared to BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not have column projection capabilities. Around 80% of the CPU time is spent retrieving data from disk for the `pospopcnt`-functions.
 
 | Approach        | Time       | Speedup |
 |-----------------|------------|---------|
@@ -12,7 +12,7 @@ This benchmark shows the speedup of the pospopcnt algorithms used on x86 CPUs co
 | Samtools – CRAM | 4m 50.68s  | 6.36    |
 | flagstats       | 0.72s      | 2569.53 |
 
-We also directly compared the potential speed of the naive subroutine in samtools againt these functions if efficient column projection would be available (rewrite). In this context, these functions are still 6.58-fold faster.
+We also directly compared the potential speed of the naive flagstat subroutine in samtools againt these functions if samtools would be rewritten with efficient column projection and the compression method changed to LZ4. In this context, these functions are still 6.58-fold faster.
 
 | Approach             | Time   | Speedup |
 |----------------------|--------|---------|

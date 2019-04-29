@@ -1,10 +1,26 @@
-#include "lz4.h"
+/*
+* Copyright (c) 2019
+* Author(s): Marcus D. R. Klarqvist
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
+#include "lz4.h" // lz4
 #include "lz4hc.h"
-#include "zstd.h"
+#include "zstd.h" // zstd
 #include "zstd_errors.h"
-#include <cstring>
-
-#include "pospopcnt.h"
+#include <cstring> // memcpy
+#include "pospopcnt.h" // pospopcnt
 
 #include <stdio.h>  // For printf()
 #include <string.h> // For memcmp()
@@ -19,6 +35,8 @@
 
 #include <unistd.h>//sync
 #include <bitset>
+
+#include "getopt.h" // options
 
 /****************************
 *  SIMD definitions
@@ -42,10 +60,6 @@
      /* GCC-compatible compiler, targeting PowerPC with SPE */
      #include <spe.h>
 #endif
-
-//temp
-//#define __AVX512F__ 1
-// #define __AVX2__ 1
 
 #if defined(__AVX512F__) && __AVX512F__ == 1
 #define SIMD_AVAILABLE  1
@@ -110,6 +124,7 @@
 /*! @abstract supplementary alignment */
 #define BAM_FSUPPLEMENTARY 2048
 
+// Support lookup for SIMD masks.
 static const uint16_t lookup_sec[2]  = {65535, 256};
 static const uint16_t lookup_sup[2]  = {65535, 2048};
 static const uint16_t lookup_pair[2] = {256+2048, 65535};
@@ -362,37 +377,6 @@ void run_screaming(const char* message, const int code) {
     exit(code);
 }
 
-int lz4(const std::string& file) {
-    std::ifstream f(file, std::ios::in | std::ios::binary);
-    if (f.good() == false) return 0;
-    uint8_t buffer[1024000]; // 512k 16-bit ints 
-    const int max_dst_size = LZ4_compressBound(1024000);
-    uint8_t* out_buffer = new uint8_t[max_dst_size];
-
-    while (f.good()) {
-        f.read((char*)buffer, 1024000);
-        int32_t bytes_read = f.gcount();
-
-        const int compressed_data_size = LZ4_compress_default((char*)buffer, (char*)out_buffer, bytes_read, max_dst_size);
-        // Check return_value to determine what happened.
-        
-        if (compressed_data_size < 0)
-            run_screaming("A negative result from LZ4_compress_default indicates a failure trying to compress the data.  See exit code (echo $?) for value returned.", compressed_data_size);
-        
-        if (compressed_data_size == 0)
-            run_screaming("A result of 0 means compression worked, but was stopped because the destination buffer couldn't hold all the information.", 1);
-        
-        std::cout.write((char*)&bytes_read, sizeof(int32_t));
-        std::cout.write((char*)&compressed_data_size, sizeof(int32_t));
-        std::cout.write((char*)out_buffer, compressed_data_size);
-
-        std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
-    }
-
-    delete[] out_buffer;
-    return 1;
-}
-
 int lz4f(const std::string& file, const std::string& out_prefix, const int acceleration = 2) {
     std::ifstream f(file, std::ios::in | std::ios::binary);
     if (f.good() == false) return 0;
@@ -423,7 +407,7 @@ int lz4f(const std::string& file, const std::string& out_prefix, const int accel
         of.write((char*)&compressed_data_size, sizeof(int32_t));
         of.write((char*)out_buffer, compressed_data_size);
         
-        std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
+        // std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
     }
 
     delete[] out_buffer;
@@ -460,7 +444,7 @@ int lz4hc(const std::string& file, const std::string& out_prefix, int clevel = 9
         of.write((char*)&compressed_data_size, sizeof(int32_t));
         of.write((char*)out_buffer, compressed_data_size);
         
-        std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
+        // std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
     }
 
     delete[] out_buffer;
@@ -496,7 +480,7 @@ int zstd(const std::string& file, const std::string& out_prefix, int clevel = 22
         of.write((char*)&compressed_data_size, sizeof(int32_t));
         of.write((char*)out_buffer, compressed_data_size);
 
-        std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
+        // std::cerr << "Compressed " << bytes_read << "->" << compressed_data_size << std::endl;
     }
     of.close();
 
@@ -626,6 +610,8 @@ int lz4_decompress(const std::string& file) {
     return 1;
 }
 
+// samtools count flagstat different:
+// https://github.com/samtools/samtools/blob/master/bam_stat.c#L47
 typedef struct {
     long long n_reads[2], n_mapped[2], n_pair_all[2], n_pair_map[2], n_pair_good[2];
     long long n_sgltn[2], n_read1[2], n_read2[2];
@@ -655,7 +641,7 @@ typedef struct {
         if (c & BAM_FDUP) ++(s)->n_dup[w];                      \
 } while (0)
 
-// Beware data is modified.
+// Beware data is modified in-place.
 static inline
 void flagstat_loop_branchless(bam_flagstat_t* s, uint16_t* inflags, const uint32_t i) {
     // QC redirect.
@@ -983,64 +969,195 @@ int zstd_decompress_samtools(const std::string& file) {
     return 1;
 }
 
-// Compile with
-// g++ -O3 -std=c++0x -I/home/mdrk/repos/FastFlagStats lz4_import.cpp /home/mdrk/repos/FastFlagStats/pospopcnt.c -o lz4_import -llz4 -lzstd
-//
-// samtools count flagstat different:
-// https://github.com/samtools/samtools/blob/master/bam_stat.c#L47
-int main(int argc, char** argv) {
-    // lz4("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin");
-    // lz4hc("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin");
+int compress(int argc, char** argv) {
+    int c;
+	if(argc < 3){
+		std::cerr << "usage" << std::endl;
+        return(EXIT_FAILURE);
+	}
 
-    // for (int i = 1; i < 10; ++i) {
-    //     lz4hc("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", i);
-    // }
+	int option_index = 0;
+	static struct option long_options[] = {
+		{"input",       required_argument, 0,  'i' },
+		{"output",      optional_argument, 0,  'o' },
+		{"compression-level", required_argument, 0,  'c' },
+        {"lz4", optional_argument, 0,  'l' },
+        {"zstd", optional_argument, 0,  'z' },
+        {"fast", optional_argument, 0,  'f' },
+		{0,0,0,0}
+	};
+	
+    std::string input, output;
+    int clevel = 1;
+    bool lz4_fast = false;
+    bool lz4 = false;
+    bool mzstd = false;
 
-    // for (int i = 2; i < 11; ++i) {
-    //     lz4f("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", i);
-    // }
+	while ((c = getopt_long(argc, argv, "i:o:c:lzf?", long_options, &option_index)) != -1){
+		switch (c){
+		case 0:
+			std::cerr << "Case 0: " << option_index << '\t' << long_options[option_index].name << std::endl;
+			break;
+		case 'i':
+			input = std::string(optarg);
+			break;
+		case 'o':
+			output = std::string(optarg);
+			break;
+		case 'c':
+			clevel = atoi(optarg);
+			if(clevel < 0){
+				std::cerr << "illegal clevel=" << clevel << std::endl;
+				return(EXIT_FAILURE);
+			}
+			break;
+		case 'f':
+			lz4_fast = true;
+			break;
+		case 'z':
+			mzstd = true;
+			break;
+		case 'l':
+			lz4 = true;
+			break;
 
-    // for (int i = 1; i < 21; ++i) {
-    //     zstd("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin","/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", i);
-    // }
+		default:
+			std::cerr << "Unrecognized option: " << (char)c << std::endl;
+			return(EXIT_FAILURE);
+		}
+	}
 
-    // zstd("/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin", 1);
-    // lz4_decompress("/media/mdrk/NVMe/NA12878D_HiSeqX_R1_flag_API_HC.bin.lz4");
+    if (lz4 == false && mzstd == false) {
+        std::cerr << "must pick a compression algorithm (lz4 or zstd)" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    if (mzstd && lz4_fast) {
+        std::cerr << "fast mode is only used with LZ4. Ignoring..." << std::endl;
+    }
+
+    if (input.size() == 0) {
+        std::cerr << "No input file given" << std::endl;
+        return EXIT_FAILURE; 
+    }
+
+    if (mzstd) {
+        if (output.size() == 0) {
+            output = input;
+        }
+        zstd(input,output, clevel);
+    }
     
-    for (int i = 1; i < 10; ++i) {
-        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c" + std::to_string(i) + ".lz4";
-        clear_cache();
-        lz4_decompress_only(file); // warmup
-        clear_cache();
-        lz4_decompress_only(file);
-        clear_cache();
-        lz4_decompress_samtools(file);
-        clear_cache();
-        lz4_decompress(file);
+    if (lz4) {
+        if (output.size() == 0) {
+            output = input;
+        }
+        if (lz4_fast) lz4f(input,output, clevel);
+        else lz4hc(input,output,clevel);
     }
 
-    for (int i = 2; i < 11; ++i) {
-        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a" + std::to_string(i) + ".lz4";
-        clear_cache();
-        lz4_decompress_only(file); // warmup
-        clear_cache();
-        lz4_decompress_only(file);
-        clear_cache();
-        lz4_decompress_samtools(file);
-        clear_cache();
-        lz4_decompress(file);
+    return EXIT_SUCCESS;
+}
+
+int check_file_extension(const std::string& filename) {
+    size_t pos = filename.rfind('.');
+    if (pos == std::string::npos)
+        return 0;
+
+    std::string ext = filename.substr(pos + 1);
+
+    if (ext == "zst") return 1;
+    if (ext == "lz4") return 2;
+
+    return 0;
+}
+
+int decompress(int argc, char** argv) {
+    int c;
+	if(argc < 3){
+		std::cerr << "usage decompress" << std::endl;
+        return(EXIT_FAILURE);
+	}
+
+	int option_index = 0;
+	static struct option long_options[] = {
+		{"input",       required_argument, 0,  'i' },
+		{0,0,0,0}
+	};
+	
+    std::string input;
+    bool lz4 = false;
+    bool mzstd = false;
+
+	while ((c = getopt_long(argc, argv, "i:?", long_options, &option_index)) != -1){
+		switch (c){
+		case 0:
+			std::cerr << "Case 0: " << option_index << '\t' << long_options[option_index].name << std::endl;
+			break;
+		case 'i':
+			input = std::string(optarg);
+			break;
+		default:
+			std::cerr << "Unrecognized option: " << (char)c << std::endl;
+			return(EXIT_FAILURE);
+		}
+	}
+
+    if (input.size() == 0) {
+        std::cerr << "No input file given" << std::endl;
+        return EXIT_FAILURE; 
     }
 
-    for (int i = 1; i < 21; ++i) {
-        std::string file = "/media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_c" + std::to_string(i) + ".zst";
+    // determine suffix
+    int method = check_file_extension(input);
+    if (method == 0) {
+        std::cerr << "unknown file extension" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    if (method == 1) {
         clear_cache();
-        zstd_decompress_only(file); // warmup
+        zstd_decompress_only(input); // warmup
         clear_cache();
-        zstd_decompress_only(file);
+        zstd_decompress_only(input);
         clear_cache();
-        zstd_decompress_samtools(file);
+        zstd_decompress_samtools(input);
         clear_cache();
-        zstd_decompress(file);
+        zstd_decompress(input);
+    }
+    
+    if (method == 2) {
+        clear_cache();
+        lz4_decompress_only(input); // warmup
+        clear_cache();
+        lz4_decompress_only(input);
+        clear_cache();
+        lz4_decompress_samtools(input);
+        clear_cache();
+        lz4_decompress(input);
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 1) {
+        std::cerr << "usage" << std::endl;
+        return EXIT_SUCCESS;
+    }
+
+    if(strcmp(&argv[1][0], "compress") == 0){
+		// return(compress(argc, argv));
+        std::cerr << "compress" << std::endl;
+        return(compress(argc,argv));
+	} else if(strcmp(&argv[1][0], "decompress") == 0){
+		// return(compress(argc, argv));
+        std::cerr << "decompress" << std::endl;
+        return(decompress(argc,argv));
+	}
+    else {
+        std::cerr << "unknown" << std::endl;
+        return EXIT_FAILURE;
     }
 
     return EXIT_SUCCESS;

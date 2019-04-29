@@ -1,7 +1,23 @@
 # FlagStats
 
-These functions compute the summary statistics for the SAM FLAG field using fast SIMD instructions. These functions use a modified [positional-popcount](https://github.com/mklarqvist/positional-popcount) approach that assumes that data is available as a contiguous stream (e.g. column projection): On a represenative readset (see [Results](#results)), these functions are 2562.4-fold faster compared to BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not have column projection capabilities. Around 80% of the CPU time spent is retrieving data from disk.
-We also directly compared the potential speed of the naive subroutine in samtools againt these functions. In this context, these functions are still 6.56-fold faster.
+These functions compute the summary statistics for the SAM FLAG field (flagstat) using fast SIMD instructions. These functions use a modified [positional-popcount](https://github.com/mklarqvist/positional-popcount) subroutine that assumes that data is available as contiguous streams (e.g. column projection).
+
+## Speedup
+
+This benchmark shows the speedup of the pospopcnt algorithms used on x86 CPUs compared to samtools using a human HiSeqX readset with 824,541,892 reads. See [Results](#results) for additional information. On a represenative readset (see [Results](#results)), these functions are 2562.4-fold faster compared to BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not have column projection capabilities. Around 80% of the CPU time spent is retrieving data from disk.
+
+| Approach        | Time       | Speedup |
+|-----------------|------------|---------|
+| Samtools – BAM  | 30m 50.06s | 1       |
+| Samtools – CRAM | 4m 50.68s  | 6.36    |
+| flagstats       | 0.72s      | 2569.53 |
+
+We also directly compared the potential speed of the naive subroutine in samtools againt these functions if efficient column projection would be available (rewrite). In this context, these functions are still 6.58-fold faster.
+
+| Approach             | Time   | Speedup |
+|----------------------|--------|---------|
+| samtools-rewrite+LZ4 | 4.74 s | 1       |
+| flagstats            | 0.72s  | 6.58    |
 
 ## Problem statement
 
@@ -42,9 +58,8 @@ Computing FLAG statistics from readsets involves iteratively incrementing up to 
 
 ## Technical approach
 
-
-## Results
-
+### Results
+### Datasets
 Aligned data:
 * https://dnanexus-rnd.s3.amazonaws.com/NA12878-xten/mappings/NA12878D_HiSeqX_R1.bam
 
@@ -52,6 +67,7 @@ Unaligned data:
 * https://dnanexus-rnd.s3.amazonaws.com/NA12878-xten/reads/NA12878D_HiSeqX_R1.fastq.gz
 * https://dnanexus-rnd.s3.amazonaws.com/NA12878-xten/reads/NA12878D_HiSeqX_R2.fastq.gz
 
+### Speed
 
 | Comp. Method | Decomp. | Sam-branchless | sam  | flagstat |
 |--------------|---------|----------------|------|----------|

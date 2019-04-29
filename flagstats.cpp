@@ -352,9 +352,11 @@ int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len,
 
 // @see: https://stackoverflow.com/questions/6818606/how-to-programmatically-clear-the-filesystem-memory-cache-in-c-on-a-linux-syst
 void clear_cache() {
+#ifdef __linux__ 
     sync();
     std::ofstream ofs("/proc/sys/vm/drop_caches");
     ofs << "3" << std::endl;
+#endif
 }
  
 int ZstdCompress(const uint8_t* in, uint32_t n_in, uint8_t* out, uint32_t out_capacity, const int32_t c_level = 1) {

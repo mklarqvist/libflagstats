@@ -2,6 +2,9 @@
 #include "lz4hc.h"
 #include "zstd.h"
 #include "zstd_errors.h"
+#include <cstring>
+
+#include "pospopcnt.h"
 
 #include <stdio.h>  // For printf()
 #include <string.h> // For memcmp()
@@ -81,123 +84,6 @@
 #define SIMD_WIDTH      0
 #endif
 
-#include "pospopcnt.h"
-
-int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len, uint32_t* flags) {
-    for (uint32_t i = len - (len % (16 * 16)); i < len; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += ((array[i] & (1 << j)) >> j);
-        }
-    }
-
-    const __m256i* data = (const __m256i*)array;
-    size_t size = len / 16;
-    __m256i v1  = _mm256_setzero_si256();
-    __m256i v2  = _mm256_setzero_si256();
-    __m256i v4  = _mm256_setzero_si256();
-    __m256i v8  = _mm256_setzero_si256();
-    __m256i v16 = _mm256_setzero_si256();
-    __m256i twosA, twosB, foursA, foursB, eightsA, eightsB;
-
-    const uint64_t limit = size - size % 16;
-    uint64_t i = 0;
-    uint16_t buffer[16];
-    __m256i counter[16];
-    const __m256i one = _mm256_set1_epi16(1);
-    const __m256i zero = _mm256_set1_epi16(0);
-
-    const __m256i mask1 = _mm256_set1_epi16(256 + 2048);
-    const __m256i mask2 = _mm256_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
-
-    while (i < limit) {        
-        for (size_t i = 0; i < 16; ++i) {
-            counter[i] = _mm256_setzero_si256();
-        }
-
-        size_t thislimit = limit;
-        if (thislimit - i >= (1 << 16))
-            thislimit = i + (1 << 16) - 1;
-
-        // Mask operation: x[i] & ((x[i] & (256 + 2048)) == 0)
-        // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
-        // Mask operation: x[i] & (((x[i] & (256 + 2048)) > 0) | (4 + 1024 + 256 + 2048))
-        
-        //_mm256_loadu_si256(data + i +  0) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i +  0) & mask1, 0 ) | mask2);
-        // _mm256_cmpeq_epi16( _mm256_loadu_si256(data + i +  0) & one, one )
-#define LOAD(j) _mm256_loadu_si256(data + i + j) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i + j) & mask1, zero ) | mask2)
-
-        // Rule 3.
-        // Mask can be written as ((x[i] & 1) == 1)
-        // True map to FFFF and False to 0000.
-        // Therefore: x[i] & (((x[i] & 1) == 1) is either x[i] or 0.
-        
-        for (/**/; i < thislimit; i += 16) {
-#define U(pos) {                     \
-    counter[pos] = _mm256_add_epi16(counter[pos], _mm256_and_si256(v16, one)); \
-    v16 = _mm256_srli_epi16(v16, 1); \
-}
-            pospopcnt_csa_avx2(&twosA,  &v1, LOAD( 0), LOAD( 1));
-            pospopcnt_csa_avx2(&twosB,  &v1, LOAD( 2), LOAD( 3));
-            pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&twosA,  &v1, LOAD( 4), LOAD( 5));
-            pospopcnt_csa_avx2(&twosB,  &v1, LOAD( 6), LOAD( 7));
-            pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&eightsA,&v4, foursA, foursB);
-            pospopcnt_csa_avx2(&twosA,  &v1, LOAD( 8),  LOAD( 9));
-            pospopcnt_csa_avx2(&twosB,  &v1, LOAD(10),  LOAD(11));
-            pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&twosA,  &v1, LOAD(12),  LOAD(13));
-            pospopcnt_csa_avx2(&twosB,  &v1, LOAD(14),  LOAD(15));
-            pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&eightsB,&v4, foursA, foursB);
-            U(0) U(1) U(2) U(3) U(4) U(5) U(6) U(7) U(8) U(9) U(10) U(11) U(12) U(13) U(14) U(15) // Updates
-            pospopcnt_csa_avx2(&v16,    &v8, eightsA, eightsB);
-#undef U
-#undef LOAD
-        }
-
-        // update the counters after the last iteration
-        for (size_t i = 0; i < 16; ++i) {
-            counter[i] = _mm256_add_epi16(counter[i], _mm256_and_si256(v16, one));
-            v16 = _mm256_srli_epi16(v16, 1);
-        }
-        
-        for (size_t i = 0; i < 16; ++i) {
-            _mm256_storeu_si256((__m256i*)buffer, counter[i]);
-            for (size_t z = 0; z < 16; z++) {
-                flags[i] += 16 * (uint32_t)buffer[z];
-            }
-        }
-    }
-
-    _mm256_storeu_si256((__m256i*)buffer, v1);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-
-    _mm256_storeu_si256((__m256i*)buffer, v2);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    _mm256_storeu_si256((__m256i*)buffer, v4);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    _mm256_storeu_si256((__m256i*)buffer, v8);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    return 0;
-}
-
 // From sam.h
 /*! @abstract the read is paired in sequencing, no matter whether it is mapped in a pair */
 #define BAM_FPAIRED        1
@@ -223,6 +109,231 @@ int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len,
 #define BAM_FDUP        1024
 /*! @abstract supplementary alignment */
 #define BAM_FSUPPLEMENTARY 2048
+
+static const uint16_t lookup_sec[2]  = {65535, 256};
+static const uint16_t lookup_sup[2]  = {65535, 2048};
+static const uint16_t lookup_pair[2] = {256+2048, 65535};
+
+void samtools_single_update(uint16_t val, uint32_t* flags) {
+    const int offset = ( (val & BAM_FQCFAIL) == 0 ) ? 0 : 16;
+
+    // Always.
+    flags[offset+3] += (val & BAM_FUNMAP) == 0; // this is implicit
+    flags[offset+10] += (val & BAM_FDUP) >> 10;
+    // Rule 1.
+    flags[offset+8] += (val & BAM_FSECONDARY) >> 8;
+    val &= lookup_sec[(val & BAM_FSECONDARY) >> 8];
+    // Rule 2.
+    flags[offset+11] += (val & BAM_FSUPPLEMENTARY) >> 11;
+    val &= lookup_sup[(val & BAM_FSUPPLEMENTARY) >> 11];
+    val &= lookup_pair[val & BAM_FPAIRED];
+    
+    // skip 4,10,8,11
+    for (int i = 0; i < 4; ++i) {
+        flags[offset+i] += ((val & (1 << i)) >> i);
+    }
+
+    for (int i = 5; i < 8; ++i) {
+        flags[offset+i] += ((val & (1 << i)) >> i);
+    }
+
+    for (int i = 9; i < 11; ++i) {
+        flags[offset+i] += ((val & (1 << i)) >> i);
+    }
+
+    for (int i = 12; i < 16; ++i) {
+        flags[offset+i] += ((val & (1 << i)) >> i);
+    }
+
+}
+
+int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    for (uint32_t i = len - (len % (16 * 16)); i < len; ++i) {
+        samtools_single_update(array[i], flags);
+    }
+
+    const __m256i* data = (const __m256i*)array;
+    size_t size = len / 16;
+    __m256i v1  = _mm256_setzero_si256();
+    __m256i v2  = _mm256_setzero_si256();
+    __m256i v4  = _mm256_setzero_si256();
+    __m256i v8  = _mm256_setzero_si256();
+    __m256i v16 = _mm256_setzero_si256();
+    __m256i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    __m256i v1U  = _mm256_setzero_si256();
+    __m256i v2U  = _mm256_setzero_si256();
+    __m256i v4U  = _mm256_setzero_si256();
+    __m256i v8U  = _mm256_setzero_si256();
+    __m256i v16U = _mm256_setzero_si256();
+    __m256i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
+
+    const uint64_t limit = size - size % 16;
+    uint64_t i = 0;
+    uint16_t buffer[16];
+    __m256i counter[16]; __m256i counterU[16];
+    const __m256i one = _mm256_set1_epi16(1);
+    const __m256i zero = _mm256_set1_epi16(0);
+
+    const __m256i mask1 = _mm256_set1_epi16(256 + 2048);
+    const __m256i mask2 = _mm256_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
+    const __m256i mask3 = _mm256_set1_epi16(512); // QC fail
+
+    while (i < limit) {        
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm256_setzero_si256();
+            counterU[i] = _mm256_setzero_si256();
+        }
+
+        size_t thislimit = limit;
+        if (thislimit - i >= (1 << 16))
+            thislimit = i + (1 << 16) - 1;
+
+        // Mask operation: x[i] & ((x[i] & (256 + 2048)) == 0)
+        // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
+        // Mask operation: x[i] & (((x[i] & (256 + 2048)) > 0) | (4 + 1024 + 256 + 2048))
+        
+        //_mm256_loadu_si256(data + i +  0) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i +  0) & mask1, 0 ) | mask2);
+        // _mm256_cmpeq_epi16( _mm256_loadu_si256(data + i +  0) & one, one )
+#define LOAD(j) __m256i data##j = _mm256_loadu_si256(data + i + j) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i + j) & mask1, zero ) | mask2);
+#define L(j) data##j & _mm256_cmpeq_epi16( data##j & mask3, zero )
+#define LU(j) data##j & _mm256_cmpeq_epi16( data##j & mask3, mask3 )
+        //   _mm256_cmpeq_epi16( data##j & mask3, mask3 )
+
+        // Rule 3.
+        // Mask can be written as ((x[i] & 1) == 1)
+        // True map to FFFF and False to 0000.
+        // Therefore: x[i] & (((x[i] & 1) == 1) is either x[i] or 0.
+        
+        for (/**/; i < thislimit; i += 16) {
+#define U(pos) {                     \
+    counter[pos] = _mm256_add_epi16(counter[pos], _mm256_and_si256(v16, one)); \
+    v16 = _mm256_srli_epi16(v16, 1); \
+}
+#define UU(pos) {                     \
+    counterU[pos] = _mm256_add_epi16(counterU[pos], _mm256_and_si256(v16U, one)); \
+    v16U = _mm256_srli_epi16(v16U, 1); \
+}
+            LOAD(0) LOAD(1)
+            pospopcnt_csa_avx2(&twosA,  &v1, L( 0), L( 1));
+            pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 0), LU( 1));
+            LOAD(2) LOAD(3)
+            pospopcnt_csa_avx2(&twosB,  &v1, L( 2), L( 3));
+            pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 2), LU( 3));
+            pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
+            pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
+            LOAD(4) LOAD(5)
+            pospopcnt_csa_avx2(&twosA,  &v1, L( 4), L( 5));
+            pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 4), LU( 5));
+            LOAD(6) LOAD(7)
+            pospopcnt_csa_avx2(&twosB,  &v1, L( 6), L( 7));
+            pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 6), LU( 7));
+            pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
+            pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
+            pospopcnt_csa_avx2(&eightsA,&v4, foursA, foursB);
+            pospopcnt_csa_avx2(&eightsAU,&v4U, foursAU, foursBU);
+            LOAD(8) LOAD(9)
+            pospopcnt_csa_avx2(&twosA,  &v1, L( 8),  L( 9));
+            pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 8),  LU( 9));
+            LOAD(10) LOAD(11)
+            pospopcnt_csa_avx2(&twosB,  &v1, L(10),  L(11));
+            pospopcnt_csa_avx2(&twosBU,  &v1U, LU(10),  LU(11));
+            pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
+            pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
+            LOAD(12) LOAD(13)
+            pospopcnt_csa_avx2(&twosA,  &v1, L(12),  L(13));
+            pospopcnt_csa_avx2(&twosAU,  &v1U, LU(12),  LU(13));
+            LOAD(14) LOAD(15)
+            pospopcnt_csa_avx2(&twosB,  &v1, L(14),  L(15));
+            pospopcnt_csa_avx2(&twosBU,  &v1U, LU(14),  LU(15));
+            pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
+            pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
+            pospopcnt_csa_avx2(&eightsB,&v4, foursA, foursB);
+            pospopcnt_csa_avx2(&eightsBU,&v4U, foursAU, foursBU);
+            U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15)  // Updates
+            UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
+            pospopcnt_csa_avx2(&v16,    &v8, eightsA, eightsB);
+            pospopcnt_csa_avx2(&v16U,    &v8U, eightsAU, eightsBU);
+#undef U
+#undef LOAD
+#undef L
+        }
+
+        // update the counters after the last iteration
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i] = _mm256_add_epi16(counter[i], _mm256_and_si256(v16, one));
+            v16 = _mm256_srli_epi16(v16, 1);
+            counterU[i] = _mm256_add_epi16(counterU[i], _mm256_and_si256(v16U, one));
+            v16U = _mm256_srli_epi16(v16U, 1);
+        }
+        
+        for (size_t i = 0; i < 16; ++i) {
+            _mm256_storeu_si256((__m256i*)buffer, counter[i]);
+            for (size_t z = 0; z < 16; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
+            }
+
+            _mm256_storeu_si256((__m256i*)buffer, counterU[i]);
+            for (size_t z = 0; z < 16; z++) {
+                flags[16+i] += 16 * (uint32_t)buffer[z];
+            }
+        }
+    }
+
+    _mm256_storeu_si256((__m256i*)buffer, v1);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm256_storeu_si256((__m256i*)buffer, v1U);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm256_storeu_si256((__m256i*)buffer, v2);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm256_storeu_si256((__m256i*)buffer, v2U);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm256_storeu_si256((__m256i*)buffer, v4);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm256_storeu_si256((__m256i*)buffer, v4U);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm256_storeu_si256((__m256i*)buffer, v8);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm256_storeu_si256((__m256i*)buffer, v8U);
+    for (size_t i = 0; i < 16; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    return 0;
+}
 
 // @see: https://stackoverflow.com/questions/6818606/how-to-programmatically-clear-the-filesystem-memory-cache-in-c-on-a-linux-syst
 void clear_cache() {
@@ -467,7 +578,7 @@ int lz4_decompress(const std::string& file) {
 
     int32_t uncompresed_size, compressed_size;
 
-    uint32_t counters[16] = {0}; // flags
+    uint32_t counters[16*2] = {0}; // flags
     uint64_t tot_flags = 0;
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
@@ -497,10 +608,16 @@ int lz4_decompress(const std::string& file) {
     auto time_span = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
     std::cerr << "[LZ4 " << file << "] Time elapsed " << time_span.count() << " ms " << tot_flags << std::endl;
 
-    // std::cerr << "Tot flags=" << tot_flags << std::endl;
-    // for (int i = 0; i < 12; ++i) {
-    //     std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
-    // }
+    std::cerr << "Tot flags=" << tot_flags << std::endl;
+    std::cerr << "Pass QC" << std::endl;
+    for (int i = 0; i < 12; ++i) {
+        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
+    }
+
+    std::cerr << "Fail QC" << std::endl;
+    for (int i = 0; i < 12; ++i) {
+        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[16+i] << std::endl;
+    }
 
     delete[] buffer;
     delete[] out_buffer;
@@ -538,6 +655,41 @@ typedef struct {
         if (c & BAM_FDUP) ++(s)->n_dup[w];                      \
 } while (0)
 
+// Beware data is modified.
+static inline
+void flagstat_loop_branchless(bam_flagstat_t* s, uint16_t* inflags, const uint32_t i) {
+    // QC redirect.
+    int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0;
+    
+    // Always.
+    ++(s)->n_reads[w];
+    (s)->n_mapped[w] += (inflags[i] & BAM_FUNMAP) == 0; // this is implicit
+    (s)->n_dup[w] += (inflags[i] & BAM_FDUP) >> 10;
+
+    // Rule 1.
+    (s)->n_secondary[w] += (inflags[i] & BAM_FSECONDARY) >> 8;
+    inflags[i] &= lookup_sec[(inflags[i] & BAM_FSECONDARY) >> 8];
+    
+    // Rule 2.
+    (s)->n_supp[w] += (inflags[i] & BAM_FSUPPLEMENTARY) >> 11;
+    inflags[i] &= lookup_sup[(inflags[i] & BAM_FSUPPLEMENTARY) >> 11];
+    // Mask operation: x[i] & ((x[i] & (256 + 2048)) > 0)
+    // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
+    // Mask operation: x[i] & (((x[i] & (256 + 2048)) > 0) | (4 + 1024 + 256 + 2048))
+    
+    // Rule 3.
+    // Mask can be written as ((x[i] & 1) == 1)
+    // True map to FFFF and False to 0000.
+    // Therefore: x[i] & (((x[i] & 1) == 1) is either x[i] or 0.
+    inflags[i] &= lookup_pair[inflags[i] & BAM_FPAIRED];
+    (s)->n_pair_all[w]  += (inflags[i] & BAM_FPAIRED);
+    (s)->n_pair_map[w]  += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP + BAM_FSECONDARY + BAM_FSUPPLEMENTARY)) == 0); // 8 + 4 + 256 + 2048
+    (s)->n_pair_good[w] += ((inflags[i] & (BAM_FPROPER_PAIR + BAM_FUNMAP)) == BAM_FPROPER_PAIR);
+    (s)->n_read1[w] += (inflags[i] & BAM_FREAD1) >> 6;
+    (s)->n_read2[w] += (inflags[i] & BAM_FREAD2) >> 7;
+    (s)->n_sgltn[w] += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP);
+}
+
 static const char* percent(char* buffer, long long n, long long total)
 {
     if (total != 0) sprintf(buffer, "%.2f%%", (float)n / total * 100.0);
@@ -560,12 +712,8 @@ int lz4_decompress_samtools(const std::string& file) {
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
     
-    bam_flagstat_t *s;
+    bam_flagstat_t* s;
     s = (bam_flagstat_t*)calloc(1, sizeof(bam_flagstat_t));
-
-    const uint16_t lookup_sec[2]  = {65535, 256};
-    const uint16_t lookup_sup[2]  = {65535, 2048};
-    const uint16_t lookup_pair[2] = {256+2048, 65535};
 
     while (f.good()) {
         f.read((char*)&uncompresed_size, sizeof(int32_t));
@@ -596,6 +744,8 @@ int lz4_decompress_samtools(const std::string& file) {
         //        8 + 4 == 8
         //        8 + 4 == 0
         for (int i = 0; i < N; ++i) {
+                flagstat_loop(s, inflags[i]);
+                // flagstat_loop_branchless(s, inflags, i);
             
             // if (1) {
             //     int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0;
@@ -627,7 +777,7 @@ int lz4_decompress_samtools(const std::string& file) {
             //     if (inflags[i] & BAM_FDUP) ++(s)->n_dup[w];
             // }
             
-
+            /*
             // QC redirect.
             int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0;
             
@@ -658,6 +808,7 @@ int lz4_decompress_samtools(const std::string& file) {
             (s)->n_read1[w] += (inflags[i] & BAM_FREAD1) >> 6;
             (s)->n_read2[w] += (inflags[i] & BAM_FREAD2) >> 7;
             (s)->n_sgltn[w] += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP);
+            */
         }
 
         // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
@@ -674,7 +825,7 @@ int lz4_decompress_samtools(const std::string& file) {
     // }
 
     // s = bam_flagstat_core(fp, header);
-    if (0) {
+    if (1) {
         char b0[16], b1[16];
         printf("%lld + %lld in total (QC-passed reads + QC-failed reads)\n", s->n_reads[0], s->n_reads[1]);
         printf("%lld + %lld secondary\n", s->n_secondary[0], s->n_secondary[1]);
@@ -810,7 +961,8 @@ int zstd_decompress_samtools(const std::string& file) {
         uint16_t* inflags = (uint16_t*)out_buffer;
         for (int i = 0; i < N; ++i) {
             // flagstat_loop(s, c);
-            flagstat_loop(s, inflags[i]);
+            // flagstat_loop(s, inflags[i]);
+            flagstat_loop_branchless(s, inflags, i);
         }
 
         // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;

@@ -19,6 +19,33 @@ We also directly compared the potential speed of the naive flagstat subroutine i
 | samtools-rewrite+LZ4 | 4.74 s | 1       |
 | flagstats            | 0.72s  | 6.58    |
 
+### Usage
+
+For Linux/Mac: Compile the test suite with: `make`. LZ4 and Zstd needs to be installed on the target machine or pass the `LZ4_PATH` and `ZSTD_PATH` flags to make for non-standard locations.
+
+First, import 2-byte FLAG words from a SAM file:
+```bash
+samtools view NA12878D_HiSeqX_R12_GRCh37.bam | cut -f 2 | ./utility > NA12878D_HiSeqX_R12_GRCh37_flags.bin
+```
+
+Compress the binary file using 512k blocks:
+```bash
+for i in {1..10}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -l -c $i; done
+for i in {1..10}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -l -f -c $i; done
+for i in {1..20}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -z -c $i; done
+```
+
+Evaluate the flagstat subroutines by first decompressing the file twice while clearing cache and then computing samtools and pospopcnt.
+```bash
+for i in {1..10}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c${i}.lz4; done
+for i in {1..10}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a${i}.lz4; done
+for i in {1..20}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_c${i}.zst; done
+```
+
+### History
+
+These functions were developed for [pil](https://github.com/mklarqvist/pil).
+
 ## Problem statement
 
 The FLAG field in the [SAM interchange format](https://github.com/samtools/hts-specs) is defined as the union of [1-hot](https://en.wikipedia.org/wiki/One-hot) encoded states for a given read. For example, the following three states evaluating to true

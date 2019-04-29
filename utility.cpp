@@ -3,7 +3,6 @@
 #include <fstream>
 
 int main(int argc, char** argv) {
-
     std::string str;
     while (std::getline(std::cin, str)) {
         uint16_t val = std::atoi(str.c_str());

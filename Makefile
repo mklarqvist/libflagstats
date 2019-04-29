@@ -19,7 +19,7 @@
 OPTFLAGS  := -O3 -march=native
 CFLAGS     = -std=c99 $(OPTFLAGS) $(DEBUG_FLAGS)
 CPPFLAGS   = -std=c++0x $(OPTFLAGS) $(DEBUG_FLAGS)
-CPP_SOURCE = lz4_import.cpp
+CPP_SOURCE = lz4_import.cpp utility.cpp
 C_SOURCE   = 
 OBJECTS    = $(CPP_SOURCE:.cpp=.o) $(C_SOURCE:.c=.o)
 
@@ -42,23 +42,23 @@ INCLUDE_PATHS := $(sort $(INCLUDE_PATHS))
 LIBRARY_PATHS := $(sort $(LIBRARY_PATHS))
 
 # Default target
-all: flagstats
+all: flagstats utility
 
 # Generic rules
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-%.o: %.cpp
-	$(CXX) $(CPPFLAGS) -c -o $@ $<
-
 pospopcnt.o: $(POSPOPCNT_PATH)/pospopcnt.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+utility.o: utility.cpp
+	$(CXX) $(CPPFLAGS) -c -o $@ $<
 
 lz4_import.o: lz4_import.cpp $(POSPOPCNT_PATH)/pospopcnt.c
 	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) -c -o $@ $<
 
 flagstats: lz4_import.o pospopcnt.o
 	$(CXX) $(CPPFLAGS) lz4_import.o pospopcnt.o -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) $(LIBRARY_PATHS) -o flagstats -llz4 -lzstd
+
+utility: utility.o
+	$(CXX) $(CPPFLAGS) utility.o -o utility
 
 clean:
 	rm -f $(OBJECTS)

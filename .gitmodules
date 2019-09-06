@@ -1,3 +1,6 @@
 [submodule "positional-popcount"]
 	path = positional-popcount
 	url = https://github.com/mklarqvist/positional-popcount
+[submodule "libalgebra"]
+	path = libalgebra
+	url = https://github.com/mklarqvist/libalgebra/

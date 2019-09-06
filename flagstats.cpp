@@ -20,7 +20,8 @@
 #include "zstd.h" // zstd
 #include "zstd_errors.h"
 #include <cstring> // memcpy
-#include "pospopcnt.h" // pospopcnt
+#include "libalgebra.h" // pospopcnt
+#include "libflagstats.h" // flagstats
 
 #include <stdio.h>  // For printf()
 #include <string.h> // For memcmp()
@@ -159,7 +160,6 @@ void samtools_single_update(uint16_t val, uint32_t* flags) {
     for (int i = 12; i < 16; ++i) {
         flags[offset+i] += ((val & (1 << i)) >> i);
     }
-
 }
 
 int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len, uint32_t* flags) {
@@ -230,45 +230,45 @@ int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len,
     v16U = _mm256_srli_epi16(v16U, 1); \
 }
             LOAD(0) LOAD(1)
-            pospopcnt_csa_avx2(&twosA,  &v1, L( 0), L( 1));
-            pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 0), LU( 1));
+            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L( 0), L( 1));
+            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 0), LU( 1));
             LOAD(2) LOAD(3)
-            pospopcnt_csa_avx2(&twosB,  &v1, L( 2), L( 3));
-            pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 2), LU( 3));
-            pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
+            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L( 2), L( 3));
+            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 2), LU( 3));
+            STORM_pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
+            STORM_pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
             LOAD(4) LOAD(5)
-            pospopcnt_csa_avx2(&twosA,  &v1, L( 4), L( 5));
-            pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 4), LU( 5));
+            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L( 4), L( 5));
+            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 4), LU( 5));
             LOAD(6) LOAD(7)
-            pospopcnt_csa_avx2(&twosB,  &v1, L( 6), L( 7));
-            pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 6), LU( 7));
-            pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
-            pospopcnt_csa_avx2(&eightsA,&v4, foursA, foursB);
-            pospopcnt_csa_avx2(&eightsAU,&v4U, foursAU, foursBU);
+            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L( 6), L( 7));
+            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 6), LU( 7));
+            STORM_pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
+            STORM_pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
+            STORM_pospopcnt_csa_avx2(&eightsA,&v4, foursA, foursB);
+            STORM_pospopcnt_csa_avx2(&eightsAU,&v4U, foursAU, foursBU);
             LOAD(8) LOAD(9)
-            pospopcnt_csa_avx2(&twosA,  &v1, L( 8),  L( 9));
-            pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 8),  LU( 9));
+            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L( 8),  L( 9));
+            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 8),  LU( 9));
             LOAD(10) LOAD(11)
-            pospopcnt_csa_avx2(&twosB,  &v1, L(10),  L(11));
-            pospopcnt_csa_avx2(&twosBU,  &v1U, LU(10),  LU(11));
-            pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
+            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L(10),  L(11));
+            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU(10),  LU(11));
+            STORM_pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
+            STORM_pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
             LOAD(12) LOAD(13)
-            pospopcnt_csa_avx2(&twosA,  &v1, L(12),  L(13));
-            pospopcnt_csa_avx2(&twosAU,  &v1U, LU(12),  LU(13));
+            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L(12),  L(13));
+            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU(12),  LU(13));
             LOAD(14) LOAD(15)
-            pospopcnt_csa_avx2(&twosB,  &v1, L(14),  L(15));
-            pospopcnt_csa_avx2(&twosBU,  &v1U, LU(14),  LU(15));
-            pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
-            pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
-            pospopcnt_csa_avx2(&eightsB,&v4, foursA, foursB);
-            pospopcnt_csa_avx2(&eightsBU,&v4U, foursAU, foursBU);
+            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L(14),  L(15));
+            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU(14),  LU(15));
+            STORM_pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
+            STORM_pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
+            STORM_pospopcnt_csa_avx2(&eightsB,&v4, foursA, foursB);
+            STORM_pospopcnt_csa_avx2(&eightsBU,&v4U, foursAU, foursBU);
             U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15)  // Updates
             UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
-            pospopcnt_csa_avx2(&v16,    &v8, eightsA, eightsB);
-            pospopcnt_csa_avx2(&v16U,    &v8U, eightsAU, eightsBU);
+            STORM_pospopcnt_csa_avx2(&v16,    &v8, eightsA, eightsB);
+            STORM_pospopcnt_csa_avx2(&v16U,    &v8U, eightsAU, eightsBU);
 #undef U
 #undef LOAD
 #undef L
@@ -423,21 +423,29 @@ int lz4hc(const std::string& file, const std::string& out_prefix, int clevel = 9
     std::string outfile = out_prefix + "_HC_c" + std::to_string(clevel) + ".lz4";
     std::cerr << "Opening=" << outfile << std::endl;
     std::ofstream of(outfile, std::ios::out | std::ios::binary);
-    if (of.good() == false) return 0;
+    if (of.good() == false) {
+        std::cerr << "outfile not good" << std::endl;
+        return 0;
+    }
+
+    std::cerr << "here1" << std::endl;
 
     uint8_t buffer[1024000]; // 512k 16-bit ints 
     const int max_dst_size = LZ4_compressBound(1024000);
     uint8_t* out_buffer = new uint8_t[max_dst_size];
 
+    std::cerr << "here" << std::endl;
+
     while (f.good()) {
         f.read((char*)buffer, 1024000);
         int32_t bytes_read = f.gcount();
+        std::cerr << "read=" << bytes_read << std::endl;
 
         const int32_t compressed_data_size = LZ4_compress_HC((char*)buffer, (char*)out_buffer, bytes_read, max_dst_size, clevel);
-        // Check return_value to determine what happened.
         
+        // Check return_value to determine what happened.
         if (compressed_data_size < 0)
-            run_screaming("A negative result from LZ4_compress_default indicates a failure trying to compress the data.  See exit code (echo $?) for value returned.", compressed_data_size);
+            run_screaming("A negative result from LZ4_compress_default indicates a failure trying to compress the data. See exit code (echo $?) for value returned.", compressed_data_size);
         
         if (compressed_data_size == 0)
             run_screaming("A result of 0 means compression worked, but was stopped because the destination buffer couldn't hold all the information.", 1);
@@ -496,13 +504,11 @@ int lz4_decompress_only(const std::string& file) {
     f.seekg(0);
     // uint8_t buffer[1024000]; // 512k 16-bit ints 
     // uint8_t out_buffer[1024000];
-    
-    uint8_t* buffer;
-    // assert(!posix_memalign((void**)buffer, SIMD_ALIGNMENT, 1024000));
-    buffer = new uint8_t[1024000];
-    uint8_t* out_buffer;
-    assert(!posix_memalign((void**)&out_buffer, SIMD_ALIGNMENT, 1024000));
+    uint8_t* buffer = new uint8_t[1024000+65536];
+    // uint8_t* out_buffer;
+    // assert(!posix_memalign((void**)&out_buffer, SIMD_ALIGNMENT, 1024000));
     // out_buffer = new uint8_t[1024000];
+    uint8_t* out_buffer = (uint8_t*)STORM_aligned_malloc(STORM_get_alignment(), 1024000+65536);
 
     int32_t uncompresed_size, compressed_size;
 
@@ -512,6 +518,7 @@ int lz4_decompress_only(const std::string& file) {
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
     while (f.good()) {
+        // std::cerr << "here" << std::endl;
         f.read((char*)&uncompresed_size, sizeof(int32_t));
         f.read((char*)&compressed_size, sizeof(int32_t));
         f.read((char*)buffer, compressed_size);
@@ -543,9 +550,10 @@ int lz4_decompress_only(const std::string& file) {
     // }
 
     delete[] buffer;
-    delete[] out_buffer;
+    // delete[] out_buffer;
     // free(buffer);
     // free(out_buffer);
+    STORM_aligned_free(out_buffer);
     return 1;
 }
 
@@ -557,10 +565,11 @@ int lz4_decompress(const std::string& file) {
     // uint8_t buffer[1024000]; // 512k 16-bit ints 
     // uint8_t out_buffer[1024000];
     
-    uint8_t* buffer = new uint8_t[1024000];
-    uint8_t* out_buffer;
-    assert(!posix_memalign((void**)&out_buffer, SIMD_ALIGNMENT, 1024000));
+    uint8_t* buffer = new uint8_t[1024000+65536];
+    // uint8_t* out_buffer;
+    // assert(!posix_memalign((void**)&out_buffer, SIMD_ALIGNMENT, 1024000));
     // out_buffer = new uint8_t[1024000];
+    uint8_t* out_buffer = (uint8_t*)STORM_aligned_malloc(STORM_get_alignment(), 1024000+65536);
 
     int32_t uncompresed_size, compressed_size;
 
@@ -584,7 +593,8 @@ int lz4_decompress(const std::string& file) {
         const uint32_t N = uncompresed_size >> 1;
         tot_flags += N;
         // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-        pospopcnt_u16_avx2_harley_seal_internal((uint16_t*)out_buffer,N,counters);
+        // FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
+        STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
 
         // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
         if (f.tellg() == filesize) break;
@@ -595,20 +605,21 @@ int lz4_decompress(const std::string& file) {
     std::cerr << "[LZ4 " << file << "] Time elapsed " << time_span.count() << " ms " << tot_flags << std::endl;
 
     std::cerr << "Tot flags=" << tot_flags << std::endl;
-    std::cerr << "Pass QC" << std::endl;
+    // std::cerr << "Pass QC" << std::endl;
     for (int i = 0; i < 12; ++i) {
-        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
+        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << "\t" << counters[16+i] << std::endl;
     }
 
-    std::cerr << "Fail QC" << std::endl;
-    for (int i = 0; i < 12; ++i) {
-        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[16+i] << std::endl;
-    }
+    // std::cerr << "Fail QC" << std::endl;
+    // for (int i = 0; i < 12; ++i) {
+    //     std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[16+i] << std::endl;
+    // }
 
     delete[] buffer;
-    delete[] out_buffer;
+    // delete[] out_buffer;
     // free(buffer);
     // free(out_buffer);
+    STORM_aligned_free(out_buffer);
     return 1;
 }
 
@@ -690,8 +701,8 @@ int lz4_decompress_samtools(const std::string& file) {
     if (f.good() == false) return 0;
     int64_t filesize = f.tellg();
     f.seekg(0);
-    uint8_t buffer[1024000]; // 512k 16-bit ints 
-    uint8_t out_buffer[1024000];
+    uint8_t buffer[1024000+65536]; // 512k 16-bit ints 
+    uint8_t out_buffer[1024000+65536];
 
     int32_t uncompresed_size, compressed_size;
 
@@ -1055,8 +1066,8 @@ int compress(int argc, char** argv) {
         if (output.size() == 0) {
             output = input;
         }
-        if (lz4_fast) lz4f(input,output, clevel);
-        else lz4hc(input,output,clevel);
+        if (lz4_fast) lz4f(input, output, clevel);
+        else lz4hc(input, output, clevel);
     }
 
     return EXIT_SUCCESS;
@@ -1119,6 +1130,7 @@ int decompress(int argc, char** argv) {
     }
 
     if (method == 1) {
+        std::cerr << "method1" << std::endl;
         clear_cache();
         zstd_decompress_only(input); // warmup
         clear_cache();
@@ -1136,6 +1148,10 @@ int decompress(int argc, char** argv) {
         lz4_decompress_only(input);
         clear_cache();
         lz4_decompress_samtools(input);
+        clear_cache();
+        lz4_decompress_samtools(input);
+        clear_cache();
+        lz4_decompress(input);
         clear_cache();
         lz4_decompress(input);
     }

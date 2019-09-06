@@ -23,7 +23,7 @@ CPP_SOURCE = flagstats.cpp utility.cpp
 C_SOURCE   = 
 OBJECTS    = $(CPP_SOURCE:.cpp=.o) $(C_SOURCE:.c=.o)
 
-POSPOPCNT_PATH  := positional-popcount
+POSPOPCNT_PATH  := libalgebra
 LZ4_PATH :=
 ZSTD_PATH :=
 INCLUDE_PATHS :=
@@ -45,17 +45,14 @@ LIBRARY_PATHS := $(sort $(LIBRARY_PATHS))
 all: flagstats utility
 
 # Generic rules
-pospopcnt.o: $(POSPOPCNT_PATH)/pospopcnt.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
 utility.o: utility.cpp
 	$(CXX) $(CPPFLAGS) -c -o $@ $<
 
-flagstats.o: flagstats.cpp $(POSPOPCNT_PATH)/pospopcnt.c
+flagstats.o: flagstats.cpp
 	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) -c -o $@ $<
 
-flagstats: flagstats.o pospopcnt.o
-	$(CXX) $(CPPFLAGS) flagstats.o pospopcnt.o -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) $(LIBRARY_PATHS) -o flagstats -llz4 -lzstd
+flagstats: flagstats.o
+	$(CXX) $(CPPFLAGS) flagstats.o -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) $(LIBRARY_PATHS) -o flagstats -llz4 -lzstd
 
 utility: utility.o
 	$(CXX) $(CPPFLAGS) utility.o -o utility

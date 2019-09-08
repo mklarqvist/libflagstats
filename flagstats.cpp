@@ -39,317 +39,6 @@
 
 #include "getopt.h" // options
 
-/****************************
-*  SIMD definitions
-****************************/
-#if defined(_MSC_VER)
-     /* Microsoft C/C++-compatible compiler */
-     #include <intrin.h>
-#elif defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
-     /* GCC-compatible compiler, targeting x86/x86-64 */
-     #include <x86intrin.h>
-#elif defined(__GNUC__) && defined(__ARM_NEON__)
-     /* GCC-compatible compiler, targeting ARM with NEON */
-     #include <arm_neon.h>
-#elif defined(__GNUC__) && defined(__IWMMXT__)
-     /* GCC-compatible compiler, targeting ARM with WMMX */
-     #include <mmintrin.h>
-#elif (defined(__GNUC__) || defined(__xlC__)) && (defined(__VEC__) || defined(__ALTIVEC__))
-     /* XLC or GCC-compatible compiler, targeting PowerPC with VMX/VSX */
-     #include <altivec.h>
-#elif defined(__GNUC__) && defined(__SPE__)
-     /* GCC-compatible compiler, targeting PowerPC with SPE */
-     #include <spe.h>
-#endif
-
-#if defined(__AVX512F__) && __AVX512F__ == 1
-#define SIMD_AVAILABLE  1
-#define SIMD_VERSION    6
-#define SIMD_WIDTH      512
-#define SIMD_ALIGNMENT  64
-#elif defined(__AVX2__) && __AVX2__ == 1
-#define SIMD_AVAILABLE  1
-#define SIMD_VERSION    5
-#define SIMD_WIDTH      256
-#define SIMD_ALIGNMENT  32
-#elif defined(__AVX__) && __AVX__ == 1
-#define SIMD_AVAILABLE  1
-#define SIMD_VERSION    4
-#define SIMD_ALIGNMENT  16
-#define SIMD_WIDTH      128
-#elif defined(__SSE4_1__) && __SSE4_1__ == 1
-#define SIMD_AVAILABLE  1
-#define SIMD_VERSION    3
-#define SIMD_ALIGNMENT  16
-#define SIMD_WIDTH      128
-#elif defined(__SSE2__) && __SSE2__ == 1
-#define SIMD_AVAILABLE  0 // unsupported version
-#define SIMD_VERSION    0
-#define SIMD_ALIGNMENT  16
-#define SIMD_WIDTH      128
-#elif defined(__SSE__) && __SSE__ == 1
-#define SIMD_AVAILABLE  0 // unsupported version
-#define SIMD_VERSION    0
-#define SIMD_ALIGNMENT  16
-#define SIMD_WIDTH      0
-#else
-#define SIMD_AVAILABLE  0
-#define SIMD_VERSION    0
-#define SIMD_ALIGNMENT  16
-#define SIMD_WIDTH      0
-#endif
-
-// From sam.h
-/*! @abstract the read is paired in sequencing, no matter whether it is mapped in a pair */
-#define BAM_FPAIRED        1
-/*! @abstract the read is mapped in a proper pair */
-#define BAM_FPROPER_PAIR   2
-/*! @abstract the read itself is unmapped; conflictive with BAM_FPROPER_PAIR */
-#define BAM_FUNMAP         4
-/*! @abstract the mate is unmapped */
-#define BAM_FMUNMAP        8
-/*! @abstract the read is mapped to the reverse strand */
-#define BAM_FREVERSE      16
-/*! @abstract the mate is mapped to the reverse strand */
-#define BAM_FMREVERSE     32
-/*! @abstract this is read1 */
-#define BAM_FREAD1        64
-/*! @abstract this is read2 */
-#define BAM_FREAD2       128
-/*! @abstract not primary alignment */
-#define BAM_FSECONDARY   256
-/*! @abstract QC failure */
-#define BAM_FQCFAIL      512
-/*! @abstract optical or PCR duplicate */
-#define BAM_FDUP        1024
-/*! @abstract supplementary alignment */
-#define BAM_FSUPPLEMENTARY 2048
-
-// Support lookup for SIMD masks.
-static const uint16_t lookup_sec[2]  = {65535, 256};
-static const uint16_t lookup_sup[2]  = {65535, 2048};
-static const uint16_t lookup_pair[2] = {256+2048, 65535};
-
-void samtools_single_update(uint16_t val, uint32_t* flags) {
-    const int offset = ( (val & BAM_FQCFAIL) == 0 ) ? 0 : 16;
-
-    // Always.
-    flags[offset+3] += (val & BAM_FUNMAP) == 0; // this is implicit
-    flags[offset+10] += (val & BAM_FDUP) >> 10;
-    // Rule 1.
-    flags[offset+8] += (val & BAM_FSECONDARY) >> 8;
-    val &= lookup_sec[(val & BAM_FSECONDARY) >> 8];
-    // Rule 2.
-    flags[offset+11] += (val & BAM_FSUPPLEMENTARY) >> 11;
-    val &= lookup_sup[(val & BAM_FSUPPLEMENTARY) >> 11];
-    val &= lookup_pair[val & BAM_FPAIRED];
-    
-    // skip 4,10,8,11
-    for (int i = 0; i < 4; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
-
-    for (int i = 5; i < 8; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
-
-    for (int i = 9; i < 11; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
-
-    for (int i = 12; i < 16; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
-}
-
-int pospopcnt_u16_avx2_harley_seal_internal(const uint16_t* array, uint32_t len, uint32_t* flags) {
-    for (uint32_t i = len - (len % (16 * 16)); i < len; ++i) {
-        samtools_single_update(array[i], flags);
-    }
-
-    const __m256i* data = (const __m256i*)array;
-    size_t size = len / 16;
-    __m256i v1  = _mm256_setzero_si256();
-    __m256i v2  = _mm256_setzero_si256();
-    __m256i v4  = _mm256_setzero_si256();
-    __m256i v8  = _mm256_setzero_si256();
-    __m256i v16 = _mm256_setzero_si256();
-    __m256i twosA, twosB, foursA, foursB, eightsA, eightsB;
-
-    __m256i v1U  = _mm256_setzero_si256();
-    __m256i v2U  = _mm256_setzero_si256();
-    __m256i v4U  = _mm256_setzero_si256();
-    __m256i v8U  = _mm256_setzero_si256();
-    __m256i v16U = _mm256_setzero_si256();
-    __m256i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
-
-    const uint64_t limit = size - size % 16;
-    uint64_t i = 0;
-    uint16_t buffer[16];
-    __m256i counter[16]; __m256i counterU[16];
-    const __m256i one = _mm256_set1_epi16(1);
-    const __m256i zero = _mm256_set1_epi16(0);
-
-    const __m256i mask1 = _mm256_set1_epi16(256 + 2048);
-    const __m256i mask2 = _mm256_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
-    const __m256i mask3 = _mm256_set1_epi16(512); // QC fail
-
-    while (i < limit) {        
-        for (size_t i = 0; i < 16; ++i) {
-            counter[i]  = _mm256_setzero_si256();
-            counterU[i] = _mm256_setzero_si256();
-        }
-
-        size_t thislimit = limit;
-        if (thislimit - i >= (1 << 16))
-            thislimit = i + (1 << 16) - 1;
-
-        // Mask operation: x[i] & ((x[i] & (256 + 2048)) == 0)
-        // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
-        // Mask operation: x[i] & (((x[i] & (256 + 2048)) > 0) | (4 + 1024 + 256 + 2048))
-        
-        //_mm256_loadu_si256(data + i +  0) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i +  0) & mask1, 0 ) | mask2);
-        // _mm256_cmpeq_epi16( _mm256_loadu_si256(data + i +  0) & one, one )
-#define LOAD(j) __m256i data##j = _mm256_loadu_si256(data + i + j) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i + j) & mask1, zero ) | mask2);
-#define L(j) data##j & _mm256_cmpeq_epi16( data##j & mask3, zero )
-#define LU(j) data##j & _mm256_cmpeq_epi16( data##j & mask3, mask3 )
-        //   _mm256_cmpeq_epi16( data##j & mask3, mask3 )
-
-        // Rule 3.
-        // Mask can be written as ((x[i] & 1) == 1)
-        // True map to FFFF and False to 0000.
-        // Therefore: x[i] & (((x[i] & 1) == 1) is either x[i] or 0.
-        
-        for (/**/; i < thislimit; i += 16) {
-#define U(pos) {                     \
-    counter[pos] = _mm256_add_epi16(counter[pos], _mm256_and_si256(v16, one)); \
-    v16 = _mm256_srli_epi16(v16, 1); \
-}
-#define UU(pos) {                     \
-    counterU[pos] = _mm256_add_epi16(counterU[pos], _mm256_and_si256(v16U, one)); \
-    v16U = _mm256_srli_epi16(v16U, 1); \
-}
-            LOAD(0) LOAD(1)
-            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L( 0), L( 1));
-            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 0), LU( 1));
-            LOAD(2) LOAD(3)
-            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L( 2), L( 3));
-            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 2), LU( 3));
-            STORM_pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
-            STORM_pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
-            LOAD(4) LOAD(5)
-            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L( 4), L( 5));
-            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 4), LU( 5));
-            LOAD(6) LOAD(7)
-            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L( 6), L( 7));
-            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU( 6), LU( 7));
-            STORM_pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
-            STORM_pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
-            STORM_pospopcnt_csa_avx2(&eightsA,&v4, foursA, foursB);
-            STORM_pospopcnt_csa_avx2(&eightsAU,&v4U, foursAU, foursBU);
-            LOAD(8) LOAD(9)
-            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L( 8),  L( 9));
-            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU( 8),  LU( 9));
-            LOAD(10) LOAD(11)
-            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L(10),  L(11));
-            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU(10),  LU(11));
-            STORM_pospopcnt_csa_avx2(&foursA, &v2, twosA, twosB);
-            STORM_pospopcnt_csa_avx2(&foursAU, &v2U, twosAU, twosBU);
-            LOAD(12) LOAD(13)
-            STORM_pospopcnt_csa_avx2(&twosA,  &v1, L(12),  L(13));
-            STORM_pospopcnt_csa_avx2(&twosAU,  &v1U, LU(12),  LU(13));
-            LOAD(14) LOAD(15)
-            STORM_pospopcnt_csa_avx2(&twosB,  &v1, L(14),  L(15));
-            STORM_pospopcnt_csa_avx2(&twosBU,  &v1U, LU(14),  LU(15));
-            STORM_pospopcnt_csa_avx2(&foursB, &v2, twosA, twosB);
-            STORM_pospopcnt_csa_avx2(&foursBU, &v2U, twosAU, twosBU);
-            STORM_pospopcnt_csa_avx2(&eightsB,&v4, foursA, foursB);
-            STORM_pospopcnt_csa_avx2(&eightsBU,&v4U, foursAU, foursBU);
-            U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15)  // Updates
-            UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
-            STORM_pospopcnt_csa_avx2(&v16,    &v8, eightsA, eightsB);
-            STORM_pospopcnt_csa_avx2(&v16U,    &v8U, eightsAU, eightsBU);
-#undef U
-#undef LOAD
-#undef L
-        }
-
-        // update the counters after the last iteration
-        for (size_t i = 0; i < 16; ++i) {
-            counter[i] = _mm256_add_epi16(counter[i], _mm256_and_si256(v16, one));
-            v16 = _mm256_srli_epi16(v16, 1);
-            counterU[i] = _mm256_add_epi16(counterU[i], _mm256_and_si256(v16U, one));
-            v16U = _mm256_srli_epi16(v16U, 1);
-        }
-        
-        for (size_t i = 0; i < 16; ++i) {
-            _mm256_storeu_si256((__m256i*)buffer, counter[i]);
-            for (size_t z = 0; z < 16; z++) {
-                flags[i] += 16 * (uint32_t)buffer[z];
-            }
-
-            _mm256_storeu_si256((__m256i*)buffer, counterU[i]);
-            for (size_t z = 0; z < 16; z++) {
-                flags[16+i] += 16 * (uint32_t)buffer[z];
-            }
-        }
-    }
-
-    _mm256_storeu_si256((__m256i*)buffer, v1);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    _mm256_storeu_si256((__m256i*)buffer, v1U);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-
-    _mm256_storeu_si256((__m256i*)buffer, v2);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    _mm256_storeu_si256((__m256i*)buffer, v2U);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-
-    _mm256_storeu_si256((__m256i*)buffer, v4);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    _mm256_storeu_si256((__m256i*)buffer, v4U);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-
-    _mm256_storeu_si256((__m256i*)buffer, v8);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-    _mm256_storeu_si256((__m256i*)buffer, v8U);
-    for (size_t i = 0; i < 16; ++i) {
-        for (int j = 0; j < 16; ++j) {
-            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
-        }
-    }
-
-    return 0;
-}
-
 // @see: https://stackoverflow.com/questions/6818606/how-to-programmatically-clear-the-filesystem-memory-cache-in-c-on-a-linux-syst
 void clear_cache() {
 #ifdef __linux__ 
@@ -369,7 +58,7 @@ int ZstdDecompress(const uint8_t* in, uint32_t n_in, uint8_t* out, uint32_t out_
     return(ret);
 }
 
-static const std::string SAM_FLAG_NAME[] = {"FPAIRED","FPROPER_PAIR","FUNMAP","FMUNMAP","FREVERSE","FMREVERSE", "FREAD1","FREAD2","FSECONDARY","FQCFAIL","FDUP","FSUPPLEMENTARY"};
+static const std::string SAM_FLAG_NAME[] = {"FPAIRED","FPROPER_PAIR","FUNMAP","FMUNMAP","FREVERSE","FMREVERSE", "FREAD1","FREAD2","FSECONDARY","FQCFAIL","FDUP","FSUPPLEMENTARY","n_pair_good","n_sgltn","n_pair_map"};
 
 /*
  * Easy show-error-and-bail function.
@@ -557,7 +246,7 @@ int lz4_decompress_only(const std::string& file) {
     return 1;
 }
 
-int lz4_decompress(const std::string& file) {
+int lz4_decompress(const std::string& file, int method = 1) {
     std::ifstream f(file, std::ios::in | std::ios::binary | std::ios::ate);
     if (f.good() == false) return 0;
     int64_t filesize = f.tellg();
@@ -578,26 +267,50 @@ int lz4_decompress(const std::string& file) {
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
-    while (f.good()) {
-        f.read((char*)&uncompresed_size, sizeof(int32_t));
-        f.read((char*)&compressed_size, sizeof(int32_t));
-        f.read((char*)buffer, compressed_size);
+    if (method == 1) {
+        while (f.good()) {
+            f.read((char*)&uncompresed_size, sizeof(int32_t));
+            f.read((char*)&compressed_size, sizeof(int32_t));
+            f.read((char*)buffer, compressed_size);
 
-        const int32_t decompressed_size = LZ4_decompress_safe((char*)buffer, (char*)out_buffer, compressed_size, uncompresed_size);
-        // Check return_value to determine what happened.
-        if (decompressed_size < 0)
-            run_screaming("A negative result from LZ4_decompress_safe indicates a failure trying to decompress the data.  See exit code (echo $?) for value returned.", decompressed_size);
-        if (decompressed_size == 0)
-            run_screaming("I'm not sure this function can ever return 0.  Documentation in lz4.h doesn't indicate so.", 1);
+            const int32_t decompressed_size = LZ4_decompress_safe((char*)buffer, (char*)out_buffer, compressed_size, uncompresed_size);
+            // Check return_value to determine what happened.
+            if (decompressed_size < 0)
+                run_screaming("A negative result from LZ4_decompress_safe indicates a failure trying to decompress the data.  See exit code (echo $?) for value returned.", decompressed_size);
+            if (decompressed_size == 0)
+                run_screaming("I'm not sure this function can ever return 0.  Documentation in lz4.h doesn't indicate so.", 1);
 
-        const uint32_t N = uncompresed_size >> 1;
-        tot_flags += N;
-        // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-        // FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
-        STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
+            const uint32_t N = uncompresed_size >> 1;
+            tot_flags += N;
+            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+            FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
+            // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
 
-        // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
-        if (f.tellg() == filesize) break;
+            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+            if (f.tellg() == filesize) break;
+        }
+    } else {
+         while (f.good()) {
+            f.read((char*)&uncompresed_size, sizeof(int32_t));
+            f.read((char*)&compressed_size, sizeof(int32_t));
+            f.read((char*)buffer, compressed_size);
+
+            const int32_t decompressed_size = LZ4_decompress_safe((char*)buffer, (char*)out_buffer, compressed_size, uncompresed_size);
+            // Check return_value to determine what happened.
+            if (decompressed_size < 0)
+                run_screaming("A negative result from LZ4_decompress_safe indicates a failure trying to decompress the data.  See exit code (echo $?) for value returned.", decompressed_size);
+            if (decompressed_size == 0)
+                run_screaming("I'm not sure this function can ever return 0.  Documentation in lz4.h doesn't indicate so.", 1);
+
+            const uint32_t N = uncompresed_size >> 1;
+            tot_flags += N;
+            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+            FLAGSTAT_sse4((uint16_t*)out_buffer,N,counters);
+            // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
+
+            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+            if (f.tellg() == filesize) break;
+        }
     }
 
     std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
@@ -606,9 +319,12 @@ int lz4_decompress(const std::string& file) {
 
     std::cerr << "Tot flags=" << tot_flags << std::endl;
     // std::cerr << "Pass QC" << std::endl;
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 15; ++i) {
         std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << "\t" << counters[16+i] << std::endl;
     }
+    // for (int i = 12; i < 15; ++i) {
+    //     std::cerr << "special-" << i << "\t" << counters[i] << "\t" << counters[16+i] << std::endl;
+    // }
 
     // std::cerr << "Fail QC" << std::endl;
     // for (int i = 0; i < 12; ++i) {
@@ -634,60 +350,26 @@ typedef struct {
 } bam_flagstat_t;
 
 #define flagstat_loop(s, c) do {                                \
-        int w = (c & BAM_FQCFAIL)? 1 : 0;                       \
+        int w = (c & FLAGSTAT_FQCFAIL)? 1 : 0;                       \
         ++(s)->n_reads[w];                                      \
-        if (c & BAM_FSECONDARY ) {                              \
+        if (c & FLAGSTAT_FSECONDARY ) {                              \
             ++(s)->n_secondary[w];                              \
-        } else if (c & BAM_FSUPPLEMENTARY ) {                   \
+        } else if (c & FLAGSTAT_FSUPPLEMENTARY ) {                   \
             ++(s)->n_supp[w];                                   \
-        } else if (c & BAM_FPAIRED) {                           \
+        } else if (c & FLAGSTAT_FPAIRED) {                           \
             ++(s)->n_pair_all[w];                               \
-            if ((c & BAM_FPROPER_PAIR) && !(c & BAM_FUNMAP) ) ++(s)->n_pair_good[w]; \
-            if (c & BAM_FREAD1) ++(s)->n_read1[w];              \
-            if (c & BAM_FREAD2) ++(s)->n_read2[w];              \
-            if ((c & BAM_FMUNMAP) && !(c & BAM_FUNMAP)) ++(s)->n_sgltn[w]; \
-            if (!(c & BAM_FUNMAP) && !(c & BAM_FMUNMAP)) {      \
+            if ((c & FLAGSTAT_FPROPER_PAIR) && !(c & FLAGSTAT_FUNMAP) ) ++(s)->n_pair_good[w]; \
+            if (c & FLAGSTAT_FREAD1) ++(s)->n_read1[w];              \
+            if (c & FLAGSTAT_FREAD2) ++(s)->n_read2[w];              \
+            if ((c & FLAGSTAT_FMUNMAP) && !(c & FLAGSTAT_FUNMAP)) ++(s)->n_sgltn[w]; \
+            if (!(c & FLAGSTAT_FUNMAP) && !(c & FLAGSTAT_FMUNMAP)) {      \
                 ++(s)->n_pair_map[w];                           \
             }                                                   \
         }                                                       \
-        if (!(c & BAM_FUNMAP)) ++(s)->n_mapped[w];              \
-        if (c & BAM_FDUP) ++(s)->n_dup[w];                      \
+        if (!(c & FLAGSTAT_FUNMAP)) ++(s)->n_mapped[w];              \
+        if (c & FLAGSTAT_FDUP) ++(s)->n_dup[w];                      \
 } while (0)
 
-// Beware data is modified in-place.
-static inline
-void flagstat_loop_branchless(bam_flagstat_t* s, uint16_t* inflags, const uint32_t i) {
-    // QC redirect.
-    int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0;
-    
-    // Always.
-    ++(s)->n_reads[w];
-    (s)->n_mapped[w] += (inflags[i] & BAM_FUNMAP) == 0; // this is implicit
-    (s)->n_dup[w] += (inflags[i] & BAM_FDUP) >> 10;
-
-    // Rule 1.
-    (s)->n_secondary[w] += (inflags[i] & BAM_FSECONDARY) >> 8;
-    inflags[i] &= lookup_sec[(inflags[i] & BAM_FSECONDARY) >> 8];
-    
-    // Rule 2.
-    (s)->n_supp[w] += (inflags[i] & BAM_FSUPPLEMENTARY) >> 11;
-    inflags[i] &= lookup_sup[(inflags[i] & BAM_FSUPPLEMENTARY) >> 11];
-    // Mask operation: x[i] & ((x[i] & (256 + 2048)) > 0)
-    // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
-    // Mask operation: x[i] & (((x[i] & (256 + 2048)) > 0) | (4 + 1024 + 256 + 2048))
-    
-    // Rule 3.
-    // Mask can be written as ((x[i] & 1) == 1)
-    // True map to FFFF and False to 0000.
-    // Therefore: x[i] & (((x[i] & 1) == 1) is either x[i] or 0.
-    inflags[i] &= lookup_pair[inflags[i] & BAM_FPAIRED];
-    (s)->n_pair_all[w]  += (inflags[i] & BAM_FPAIRED);
-    (s)->n_pair_map[w]  += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP + BAM_FSECONDARY + BAM_FSUPPLEMENTARY)) == 0); // 8 + 4 + 256 + 2048
-    (s)->n_pair_good[w] += ((inflags[i] & (BAM_FPROPER_PAIR + BAM_FUNMAP)) == BAM_FPROPER_PAIR);
-    (s)->n_read1[w] += (inflags[i] & BAM_FREAD1) >> 6;
-    (s)->n_read2[w] += (inflags[i] & BAM_FREAD2) >> 7;
-    (s)->n_sgltn[w] += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP);
-}
 
 static const char* percent(char* buffer, long long n, long long total)
 {
@@ -911,7 +593,7 @@ int zstd_decompress(const std::string& file) {
         const uint32_t N = uncompresed_size >> 1;
         tot_flags += N;
         // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-        pospopcnt_u16_avx2_harley_seal_internal((uint16_t*)out_buffer,N,counters);
+        FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
 
         // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
         if (f.tellg() == filesize) break;
@@ -943,7 +625,7 @@ int zstd_decompress_samtools(const std::string& file) {
     uint64_t tot_flags = 0;
 
     bam_flagstat_t *s;
-    s = (bam_flagstat_t*)calloc(1, sizeof(bam_flagstat_t));
+    s = (bam_flagstat_t*)calloc(1, sizeof(bam_flagstat_t)); 
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
@@ -961,8 +643,8 @@ int zstd_decompress_samtools(const std::string& file) {
         uint16_t* inflags = (uint16_t*)out_buffer;
         for (int i = 0; i < N; ++i) {
             // flagstat_loop(s, c);
-            // flagstat_loop(s, inflags[i]);
-            flagstat_loop_branchless(s, inflags, i);
+            flagstat_loop(s, inflags[i]);
+            // flagstat_loop_branchless(s, inflags, i);
         }
 
         // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
@@ -1149,11 +831,9 @@ int decompress(int argc, char** argv) {
         clear_cache();
         lz4_decompress_samtools(input);
         clear_cache();
-        lz4_decompress_samtools(input);
+        lz4_decompress(input, 1);
         clear_cache();
-        lz4_decompress(input);
-        clear_cache();
-        lz4_decompress(input);
+        lz4_decompress(input, 2);
     }
 
     return EXIT_SUCCESS;

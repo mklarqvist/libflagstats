@@ -62,69 +62,327 @@
 
 // From sam.h
 /*! @abstract the read is paired in sequencing, no matter whether it is mapped in a pair */
-#define BAM_FPAIRED        1
+#define FLAGSTAT_FPAIRED               1
+#define FLAGSTAT_FPAIRED_OFF           0
 /*! @abstract the read is mapped in a proper pair */
-#define BAM_FPROPER_PAIR   2
-/*! @abstract the read itself is unmapped; conflictive with BAM_FPROPER_PAIR */
-#define BAM_FUNMAP         4
+#define FLAGSTAT_FPROPER_PAIR          2
+#define FLAGSTAT_FPROPER_PAIR_OFF      1
+/*! @abstract the read itself is unmapped; conflictive with FLAGSTAT_FPROPER_PAIR */
+#define FLAGSTAT_FUNMAP                4
+#define FLAGSTAT_FUNMAP_OFF            2
 /*! @abstract the mate is unmapped */
-#define BAM_FMUNMAP        8
+#define FLAGSTAT_FMUNMAP               8
+#define FLAGSTAT_FMUNMAP_OFF           3
 /*! @abstract the read is mapped to the reverse strand */
-#define BAM_FREVERSE      16
+#define FLAGSTAT_FREVERSE             16
+#define FLAGSTAT_FREVERSE_OFF          4
 /*! @abstract the mate is mapped to the reverse strand */
-#define BAM_FMREVERSE     32
+#define FLAGSTAT_FMREVERSE            32
+#define FLAGSTAT_FMREVERSE_OFF         5
 /*! @abstract this is read1 */
-#define BAM_FREAD1        64
+#define FLAGSTAT_FREAD1               64
+#define FLAGSTAT_FREAD1_OFF            6
 /*! @abstract this is read2 */
-#define BAM_FREAD2       128
+#define FLAGSTAT_FREAD2              128
+#define FLAGSTAT_FREAD2_OFF            7
 /*! @abstract not primary alignment */
-#define BAM_FSECONDARY   256
+#define FLAGSTAT_FSECONDARY          256
+#define FLAGSTAT_FSECONDARY_OFF        8
 /*! @abstract QC failure */
-#define BAM_FQCFAIL      512
+#define FLAGSTAT_FQCFAIL             512
+#define FLAGSTAT_FQCFAIL_OFF           9
 /*! @abstract optical or PCR duplicate */
-#define BAM_FDUP        1024
+#define FLAGSTAT_FDUP               1024
+#define FLAGSTAT_FDUP_OFF             10
 /*! @abstract supplementary alignment */
-#define BAM_FSUPPLEMENTARY 2048
+#define FLAGSTAT_FSUPPLEMENTARY     2048
+#define FLAGSTAT_FSUPPLEMENTARY_OFF   11
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-static const uint16_t FLAGSTAT_lookup_sec[2]  = {65535, 256}; // Complete selector, BAM_FSECONDARY
-static const uint16_t FLAGSTAT_lookup_sup[2]  = {65535, 2048}; // Complete selector, BAM_FSUPPLEMENTARY
-static const uint16_t FLAGSTAT_lookup_pair[2] = {256+2048, 65535}; // BAM_FSECONDARY + BAM_FSUPPLEMENTARY, complete selector
-
 void FLAGSTAT_samtools_single_update(uint16_t val, uint32_t* flags) {
-    const int offset = ( (val & BAM_FQCFAIL) == 0 ) ? 0 : 16;
+    // If the FLAGSTAT_FQCFAIL is set the data is shift 16 values to
+    // the right to distinguish between statistics for data
+    // that failed and passed quality control.
+    const int offset = ( (val & FLAGSTAT_FQCFAIL) == 0 ) ? 0 : 16;
+    if (offset) ++flags[offset + FLAGSTAT_FQCFAIL_OFF];
 
-    // Always.
-    flags[offset+3]  += (val & BAM_FUNMAP) == 0; // this is implicit
-    flags[offset+10] += (val & BAM_FDUP) >> 10;
-    // Rule 1.
-    flags[offset+8]  += (val & BAM_FSECONDARY) >> 8;
-    val &= FLAGSTAT_lookup_sec[(val & BAM_FSECONDARY) >> 8];
-    // Rule 2.
-    flags[offset+11] += (val & BAM_FSUPPLEMENTARY) >> 11;
-    val &= FLAGSTAT_lookup_sup[(val & BAM_FSUPPLEMENTARY) >> 11];
-    val &= FLAGSTAT_lookup_pair[val & BAM_FPAIRED];
-    
-    // skip 4,10,8,11
-    for (int i = 0; i < 4; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
+    if (val & FLAGSTAT_FSECONDARY) ++flags[offset + FLAGSTAT_FSECONDARY_OFF];
+    else if (val & FLAGSTAT_FSUPPLEMENTARY) ++flags[offset + FLAGSTAT_FSUPPLEMENTARY_OFF];
+    else if (val & FLAGSTAT_FPAIRED) {
+        // ++(s)->n_pair_all[w];                
+        if ( (val & FLAGSTAT_FPROPER_PAIR) && !(val & FLAGSTAT_FUNMAP) ) ++flags[offset + 12];
+        if (val & FLAGSTAT_FREAD1) ++flags[offset + FLAGSTAT_FREAD1_OFF];
+        if (val & FLAGSTAT_FREAD2) ++flags[offset + FLAGSTAT_FREAD2_OFF];
+        if ((val & FLAGSTAT_FMUNMAP) && !(val & FLAGSTAT_FUNMAP))  ++flags[offset + 13];
+        if (!(val & FLAGSTAT_FUNMAP) && !(val & FLAGSTAT_FMUNMAP)) ++flags[offset + 14];
     }
-
-    for (int i = 5; i < 8; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
-
-    for (int i = 9; i < 11; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
-
-    for (int i = 12; i < 16; ++i) {
-        flags[offset+i] += ((val & (1 << i)) >> i);
-    }
+    if (!(val & FLAGSTAT_FUNMAP)) ++flags[offset + FLAGSTAT_FUNMAP_OFF];
+    if (val & FLAGSTAT_FDUP)      ++flags[offset + FLAGSTAT_FDUP_OFF];
 }
+
+#define SAMTOOLS_flagstat_loop(s, c) do {                      \
+    int w = (c & FLAGSTAT_FQCFAIL)? 1 : 0;                       \
+    ++(s)->n_reads[w];                                      \
+    if (c & FLAGSTAT_FSECONDARY ) {                              \
+        ++(s)->n_secondary[w];                              \
+    } else if (c & FLAGSTAT_FSUPPLEMENTARY ) {                   \
+        ++(s)->n_supp[w];                                   \
+    } else if (c & FLAGSTAT_FPAIRED) {                           \
+        ++(s)->n_pair_all[w];                               \
+        if ( (c & FLAGSTAT_FPROPER_PAIR) && !(c & FLAGSTAT_FUNMAP) ) ++(s)->n_pair_good[w]; \
+        if (c & FLAGSTAT_FREAD1) ++(s)->n_read1[w];              \
+        if (c & FLAGSTAT_FREAD2) ++(s)->n_read2[w];              \
+        if ((c & FLAGSTAT_FMUNMAP) && !(c & FLAGSTAT_FUNMAP)) ++(s)->n_sgltn[w]; \
+        if (!(c & FLAGSTAT_FUNMAP) && !(c & FLAGSTAT_FMUNMAP)) {      \
+            ++(s)->n_pair_map[w];                           \
+        }                                                   \
+    }                                                       \
+    if (!(c & FLAGSTAT_FUNMAP)) ++(s)->n_mapped[w];              \
+    if (c & FLAGSTAT_FDUP) ++(s)->n_dup[w];                      \
+} while (0)
+
+// x = ((x & FLAGSTAT_FSECONDARY) == FLAGSTAT_FSECONDARY) & (FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP)
+// x = ((x & FLAGSTAT_FSUPPLEMENTARY) == FLAGSTAT_FSUPPLEMENTARY) & (FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP)
+// x = ((x & FLAGSTAT_FPAIRED) == FLAGSTAT_FPAIRED) & (FLAGSTAT_FUNMAP + FLAGSTAT_FDUP + FLAGSTAT_FPAIRED + FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FREAD1 + FLAGSTAT_FREAD2 + FLAGSTAT_FMUNMAP)
+
+// FLAGSTAT_FPROPER_PAIR & !FLAGSTAT_FUNMAP
+// x |= (x & (FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP) == FLAGSTAT_FPROPER_PAIR) & 1 << 13
+// FLAGSTAT_FMUNMAP & !FLAGSTAT_FUNMAP
+// x |= (x & (FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP) == FLAGSTAT_FMUNMAP) & 1 << 14
+
+#if defined(STORM_HAVE_SSE42)
+
+#include <immintrin.h>
+
+STORM_TARGET("sse4.2")
+static
+int FLAGSTAT_sse4(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
+    for (uint32_t i = len - (len % (16 * 8)); i < len; ++i) {
+        FLAGSTAT_samtools_single_update(array[i], flags);
+    }
+
+    const __m128i* data = (const __m128i*)array;
+    size_t size = len / 8;
+    __m128i v1  = _mm_setzero_si128();
+    __m128i v2  = _mm_setzero_si128();
+    __m128i v4  = _mm_setzero_si128();
+    __m128i v8  = _mm_setzero_si128();
+    __m128i v16 = _mm_setzero_si128();
+    __m128i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    __m128i v1U  = _mm_setzero_si128();
+    __m128i v2U  = _mm_setzero_si128();
+    __m128i v4U  = _mm_setzero_si128();
+    __m128i v8U  = _mm_setzero_si128();
+    __m128i v16U = _mm_setzero_si128();
+    __m128i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
+
+    const uint64_t limit = size - size % 16;
+    uint64_t i = 0;
+    uint16_t buffer[8];
+    __m128i counter[16];
+    __m128i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m128i m1   = _mm_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m128i m1S  = _mm_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m128i m2   = _mm_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m128i m2S  = _mm_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m128i m3   = _mm_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m128i m4   = _mm_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m128i one  = _mm_set1_epi16(1); // (00...1) vector
+    const __m128i zero = _mm_set1_epi16(0); // (00...0) vector
+
+    // Main body.
+    while (i < limit) {        
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm_setzero_si128();
+            counterU[i] = _mm_setzero_si128();
+        }
+
+        size_t thislimit = limit;
+        if (thislimit - i >= (1 << 16))
+            thislimit = i + (1 << 16) - 1;
+
+        ///////////////////////////////////////////////////////////////////////
+        // We load a register of data (data + i + j) and then using a the
+        // resulting mask from a VPCMPEQW instruction comparing equality with
+        // the mask mask1 (FLAGSTAT_FSECONDARY + FLAGSTAT_FSUPPLEMENTARY). The resulting
+        // data is either the original data or empty as DATA & (00...0) is a
+        // zero register and DATA & (11...1) is the data itself. The resulting
+        // data is combined (bitwise or) with the mask mask2 as this information
+        // is required.
+        //
+        // FLAGSTATS outputs summary statistics separately for reads that pass
+        // QC and those that do not. Therefore we need to partition the data
+        // into these two classes. For data that pass QC, the L registers, we
+        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask mask3. The
+        // resulting data is used to perform another mask-select using VPCMPEQW
+        // against the empty vector (00...0). As above, if the data has the
+        // FLAGSTAT_FQCFAIL bit set then this register will be zeroed out. The exact
+        // process is performed for reads that fail QC, the LU registers, with
+        // the difference that mask-selection is based on the one vector
+        // (00...1).
+
+#define W(j) __m128i data##j = _mm_loadu_si128(data + i + j);
+#define O1(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP)), _mm_set1_epi16(FLAGSTAT_FPROPER_PAIR)) & one, 12); 
+#define O2(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), _mm_set1_epi16(FLAGSTAT_FMUNMAP)) & one, 13); 
+#define O3(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), zero) & one, 14); 
+#define L1(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m1), zero) | m1S);
+#define L2(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m2), zero) | m2S);
+#define L3(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m3), m3)   | m2S);
+#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define L(j)  data##j & _mm_cmpeq_epi16( data##j & m4, zero )
+#define LU(j) data##j & _mm_cmpeq_epi16( data##j & m4, m4 )
+        
+        for (/**/; i < thislimit; i += 16) {
+#define U(pos) {                     \
+    counter[pos] = _mm_add_epi16(counter[pos], _mm_and_si128(v16, one));    \
+    v16 = _mm_srli_epi16(v16, 1); \
+}
+#define UU(pos) {                      \
+    counterU[pos] = _mm_add_epi16(counterU[pos], _mm_and_si128(v16U, one)); \
+    v16U = _mm_srli_epi16(v16U, 1); \
+}
+            LOAD(0) LOAD(1)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L( 0),  L( 1));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU( 0), LU( 1));
+            LOAD(2) LOAD(3)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L( 2),  L( 3));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU( 2), LU( 3));
+            STORM_pospopcnt_csa_sse(&foursA,  &v2,  twosA, twosB);
+            STORM_pospopcnt_csa_sse(&foursAU, &v2U, twosAU, twosBU);
+            LOAD(4) LOAD(5)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L( 4),  L( 5));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU( 4), LU( 5));
+            LOAD(6) LOAD(7)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L( 6),  L( 7));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU( 6), LU( 7));
+            STORM_pospopcnt_csa_sse(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_sse(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_sse(&eightsA, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_sse(&eightsAU,&v4U, foursAU, foursBU);
+            LOAD(8) LOAD(9)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L( 8),   L( 9));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU( 8),  LU( 9));
+            LOAD(10) LOAD(11)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L(10),   L(11));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU(10),  LU(11));
+            STORM_pospopcnt_csa_sse(&foursA,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_sse(&foursAU, &v2U, twosAU,  twosBU);
+            LOAD(12) LOAD(13)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L(12),   L(13));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU(12),  LU(13));
+            LOAD(14) LOAD(15)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L(14),   L(15));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU(14),  LU(15));
+            STORM_pospopcnt_csa_sse(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_sse(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_sse(&eightsB, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_sse(&eightsBU,&v4U, foursAU, foursBU);
+             U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15) // Updates
+            UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
+            STORM_pospopcnt_csa_sse(&v16,     &v8,  eightsA,  eightsB);
+            STORM_pospopcnt_csa_sse(&v16U,    &v8U, eightsAU, eightsBU);
+#undef U
+#undef UU
+#undef LOAD
+#undef L
+#undef LU
+#undef W
+#undef O1
+#undef O2
+#undef O3
+#undef L1
+#undef L2
+#undef L3
+        }
+
+        // Update the counters after the last iteration
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm_add_epi16(counter[i], _mm_and_si128(v16, one));
+            v16  = _mm_srli_epi16(v16, 1);
+            counterU[i] = _mm_add_epi16(counterU[i], _mm_and_si128(v16U, one));
+            v16U = _mm_srli_epi16(v16U, 1);
+        }
+        
+        for (size_t i = 0; i < 16; ++i) {
+            _mm_storeu_si128((__m128i*)buffer, counter[i]);
+            for (size_t z = 0; z < 8; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
+            }
+
+            _mm_storeu_si128((__m128i*)buffer, counterU[i]);
+            for (size_t z = 0; z < 8; z++) {
+                flags[16+i] += 16 * (uint32_t)buffer[z];
+            }
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v1);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v1U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v2);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v2U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v4);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v4U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v8);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v8U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
+
+    return 0;
+}
+
+#endif
 
 #if defined(STORM_HAVE_AVX2)
 
@@ -133,6 +391,8 @@ void FLAGSTAT_samtools_single_update(uint16_t val, uint32_t* flags) {
 STORM_TARGET("avx2")
 static
 int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
     for (uint32_t i = len - (len % (16 * 16)); i < len; ++i) {
         FLAGSTAT_samtools_single_update(array[i], flags);
     }
@@ -156,18 +416,21 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
     const uint64_t limit = size - size % 16;
     uint64_t i = 0;
     uint16_t buffer[16];
-    __m256i counter[16]; __m256i counterU[16];
-    const __m256i one  = _mm256_set1_epi16(1); // (11...1) vector
+    __m256i counter[16]; 
+    __m256i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m256i m1   = _mm256_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m256i m1S  = _mm256_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m256i m2   = _mm256_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m256i m2S  = _mm256_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m256i m3   = _mm256_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m256i m4   = _mm256_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m256i one  = _mm256_set1_epi16(1); // (00...1) vector
     const __m256i zero = _mm256_set1_epi16(0); // (00...0) vector
 
-    // Mask selectors.
-    const __m256i mask1 = _mm256_set1_epi16(256 + 2048); // BAM_FSECONDARY (256) + BAM_FSUPPLEMENTARY (2048)
-    const __m256i mask2 = _mm256_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep BAM_FUNMAP (4) + BAM_FDUP (1024) 
-        // for Always rule and BAM_FSECONDARY (256) and BAM_FSUPPLEMENTARY (2048) for Rule 1 and Rule 2.
-    const __m256i mask3 = _mm256_set1_epi16(512); // BAM_FQCFAIL (512)
-
     // Main body.
-    while (i < limit) {        
+    while (i < limit) {
         for (size_t i = 0; i < 16; ++i) {
             counter[i]  = _mm256_setzero_si256();
             counterU[i] = _mm256_setzero_si256();
@@ -178,29 +441,39 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
             thislimit = i + (1 << 16) - 1;
 
         ///////////////////////////////////////////////////////////////////////
-        // We load a register of data (data + i + j) and then using a the resulting mask from
-        // a VPCMPEQW instruction comparing equality with the mask mask1 
-        // (BAM_FSECONDARY + BAM_FSUPPLEMENTARY). The resulting data is either the original data
-        // or empty as DATA & (00...0) is a zero register and DATA & (11...1) is the data itself. 
-        // The resulting data is combined (bitwise or) with the mask mask2 as this information
+        // We load a register of data (data + i + j) and then using a the
+        // resulting mask from a VPCMPEQW instruction comparing equality with
+        // the mask mask1 (FLAGSTAT_FSECONDARY + FLAGSTAT_FSUPPLEMENTARY). The resulting
+        // data is either the original data or empty as DATA & (00...0) is a
+        // zero register and DATA & (11...1) is the data itself. The resulting
+        // data is combined (bitwise or) with the mask mask2 as this information
         // is required.
         //
-        // FLAGSTATS outputs summary statistics separately for reads that pass QC and those
-        // that do not. Therefore we need to partition the data into these two classes.
-        // For data that pass QC, the L registers, we first bit-select the target BAM_FQCFAIL bit
-        // using the mask mask3. The resulting data is used to perform another mask-select using VPCMPEQW 
-        // against the empty vector (00...0). As above, if the data has the BAM_FQCFAIL bit set then
-        // this register will be zeroed out.
-        // The exact process is performed for reads that fail QC, the LU registers, with the difference
-        // that mask-selection is based on the one vector (11...1).
+        // FLAGSTATS outputs summary statistics separately for reads that pass
+        // QC and those that do not. Therefore we need to partition the data
+        // into these two classes. For data that pass QC, the L registers, we
+        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask mask3. The
+        // resulting data is used to perform another mask-select using VPCMPEQW
+        // against the empty vector (00...0). As above, if the data has the
+        // FLAGSTAT_FQCFAIL bit set then this register will be zeroed out. The exact
+        // process is performed for reads that fail QC, the LU registers, with
+        // the difference that mask-selection is based on the one vector
+        // (00...1).
 
-#define LOAD(j) __m256i data##j = _mm256_loadu_si256(data + i + j) & (_mm256_cmpeq_epi16( _mm256_loadu_si256(data + i + j) & mask1, zero ) | mask2);
-#define L(j)  data##j & _mm256_cmpeq_epi16( data##j & mask3, zero )
-#define LU(j) data##j & _mm256_cmpeq_epi16( data##j & mask3, mask3 )
+#define W(j) __m256i data##j = _mm256_loadu_si256(data + i + j);
+#define O1(j) data##j = data##j | _mm256_slli_epi16(data##j & _mm256_cmpeq_epi16((data##j & _mm256_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP)), _mm256_set1_epi16(FLAGSTAT_FPROPER_PAIR)) & one, 12); 
+#define O2(j) data##j = data##j | _mm256_slli_epi16(data##j & _mm256_cmpeq_epi16((data##j & _mm256_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), _mm256_set1_epi16(FLAGSTAT_FMUNMAP)) & one, 13); 
+#define O3(j) data##j = data##j | _mm256_slli_epi16(data##j & _mm256_cmpeq_epi16((data##j & _mm256_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), zero) & one, 14); 
+#define L1(j) data##j = data##j & (_mm256_cmpeq_epi16((data##j & m1), zero) | m1S);
+#define L2(j) data##j = data##j & (_mm256_cmpeq_epi16((data##j & m2), zero) | m2S);
+#define L3(j) data##j = data##j & (_mm256_cmpeq_epi16((data##j & m3), m3)   | m2S);
+#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define L(j)  data##j & _mm256_cmpeq_epi16( data##j & m4, zero )
+#define LU(j) data##j & _mm256_cmpeq_epi16( data##j & m4, m4 )
         
         for (/**/; i < thislimit; i += 16) {
 #define U(pos) {                     \
-    counter[pos] = _mm256_add_epi16(counter[pos], _mm256_and_si256(v16, one)); \
+    counter[pos] = _mm256_add_epi16(counter[pos], _mm256_and_si256(v16, one));    \
     v16 = _mm256_srli_epi16(v16, 1); \
 }
 #define UU(pos) {                      \
@@ -252,6 +525,13 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
 #undef LOAD
 #undef L
 #undef LU
+#undef W
+#undef O1
+#undef O2
+#undef O3
+#undef L1
+#undef L2
+#undef L3
         }
 
         // Update the counters after the last iteration
@@ -327,6 +607,9 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
         }
     }
 
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
+
     return 0;
 }
 #endif // end avx2
@@ -366,10 +649,10 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
     const __m512i zero = _mm512_set1_epi16(0); // (00...0) vector
 
     // Mask selectors.
-    const __m512i mask1 = _mm512_set1_epi16(256 + 2048); // BAM_FSECONDARY (256) + BAM_FSUPPLEMENTARY (2048)
-    const __m512i mask2 = _mm512_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep BAM_FUNMAP (4) + BAM_FDUP (1024) 
-        // for Always rule and BAM_FSECONDARY (256) and BAM_FSUPPLEMENTARY (2048) for Rule 1 and Rule 2.
-    const __m512i mask3 = _mm512_set1_epi16(512); // BAM_FQCFAIL (512)
+    const __m512i mask1 = _mm512_set1_epi16(256 + 2048); // FLAGSTAT_FSECONDARY (256) + FLAGSTAT_FSUPPLEMENTARY (2048)
+    const __m512i mask2 = _mm512_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep FLAGSTAT_FUNMAP (4) + FLAGSTAT_FDUP (1024) 
+        // for Always rule and FLAGSTAT_FSECONDARY (256) and FLAGSTAT_FSUPPLEMENTARY (2048) for Rule 1 and Rule 2.
+    const __m512i mask3 = _mm512_set1_epi16(512); // FLAGSTAT_FQCFAIL (512)
 
     while (i < limit) {
         for (size_t i = 0; i < 16; ++i) {
@@ -384,16 +667,16 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
         ///////////////////////////////////////////////////////////////////////
         // We load a register of data (data + i + j) and then using a the resulting mask from
         // a VPCMPEQW instruction comparing equality with the mask mask1 
-        // (BAM_FSECONDARY + BAM_FSUPPLEMENTARY). The resulting data is either the original data
+        // (FLAGSTAT_FSECONDARY + FLAGSTAT_FSUPPLEMENTARY). The resulting data is either the original data
         // or empty as DATA & (00...0) is a zero register and DATA & (11...1) is the data itself. 
         // The resulting data is combined (bitwise or) with the mask mask2 as this information
         // is required.
         //
         // FLAGSTATS outputs summary statistics separately for reads that pass QC and those
         // that do not. Therefore we need to partition the data into these two classes.
-        // For data that pass QC, the L registers, we first bit-select the target BAM_FQCFAIL bit
+        // For data that pass QC, the L registers, we first bit-select the target FLAGSTAT_FQCFAIL bit
         // using the mask mask3. The resulting data is used to perform another mask-select using VPCMPEQW 
-        // against the empty vector (00...0). As above, if the data has the BAM_FQCFAIL bit set then
+        // against the empty vector (00...0). As above, if the data has the FLAGSTAT_FQCFAIL bit set then
         // this register will be zeroed out.
         // The exact process is performed for reads that fail QC, the LU registers, with the difference
         // that mask-selection is based on the one vector (11...1).

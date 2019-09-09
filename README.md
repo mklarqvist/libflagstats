@@ -1,12 +1,13 @@
-# FlagStats
+# libflagstats
 
 These functions compute the summary statistics for the SAM FLAG field (flagstat)
 using fast SIMD instructions. They are based on the
 [positional-popcount](https://github.com/mklarqvist/positional-popcount)
 (`pospopcnt`) subroutines and assumes that data is available as contiguous
 streams (e.g. column projection). In this example, we use block sizes of 512k
-records (1 MB). Currently, this example requires AVX-256 but is easily rewritten
-to support any instruction set.
+records (1 MB). The heavily branched and bit-dependent SAMtools code can be
+rewritten using a mask-select propagate-carry approach that feeds into
+Harley-Seal-based carry-save adder networks.
 
 ## Speedup
 
@@ -22,7 +23,7 @@ retrieving data from disk for the `pospopcnt`-functions.
 |-----------------|------------|---------|
 | Samtools – BAM  | 30m 50.06s | 1       |
 | Samtools – CRAM | 4m 50.68s  | 6.36    |
-| flagstats       | 0.72s      | 2569.53 |
+| libflagstats       | 0.72s      | 2569.53 |
 
 We also directly compared the potential speed of the naive flagstat subroutine
 in samtools againt these functions if samtools would be rewritten with efficient
@@ -32,7 +33,7 @@ these functions are still 6.58-fold faster.
 | Approach             | Time   | Speedup |
 |----------------------|--------|---------|
 | samtools-rewrite+LZ4 | 4.74 s | 1       |
-| flagstats            | 0.72s  | 6.58    |
+| libflagstats            | 0.72s  | 6.58    |
 
 ### Usage
 
@@ -47,17 +48,17 @@ samtools view NA12878D_HiSeqX_R12_GRCh37.bam | cut -f 2 | ./utility > NA12878D_H
 
 Compress the binary file using 512k blocks:
 ```bash
-for i in {1..10}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -l -c $i; done
-for i in {1..10}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -l -f -c $i; done
-for i in {1..20}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -z -c $i; done
+for i in {1..10}; do ./bench compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -l -c $i; done
+for i in {1..10}; do ./bench compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -l -f -c $i; done
+for i in {1..20}; do ./bench compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -z -c $i; done
 ```
 
 Evaluate the flagstat subroutines by first decompressing the file twice while
 clearing cache and then computing samtools and pospopcnt.
 ```bash
-for i in {1..10}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c${i}.lz4; done
-for i in {1..10}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a${i}.lz4; done
-for i in {1..20}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_c${i}.zst; done
+for i in {1..10}; do ./bench decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c${i}.lz4; done
+for i in {1..10}; do ./bench decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a${i}.lz4; done
+for i in {1..20}; do ./bench decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_c${i}.zst; done
 ```
 
 ### History

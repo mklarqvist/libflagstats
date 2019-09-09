@@ -56,9 +56,9 @@ for i in {1..20}; do ./bench compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -z
 Evaluate the flagstat subroutines by first decompressing the file twice while
 clearing cache and then computing samtools and pospopcnt.
 ```bash
-for i in {1..10}; do ./bench decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c${i}.lz4; done
-for i in {1..10}; do ./bench decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a${i}.lz4; done
-for i in {1..20}; do ./bench decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_c${i}.zst; done
+for i in {1..10}; do ./bench decompress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c${i}.lz4; done
+for i in {1..10}; do ./bench decompress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a${i}.lz4; done
+for i in {1..20}; do ./bench decompress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin_c${i}.zst; done
 ```
 
 ### History

@@ -156,6 +156,13 @@ void FLAGSTAT_scalar_update(uint16_t val, uint32_t* flags) {
 // FLAGSTAT_FMUNMAP & !FLAGSTAT_FUNMAP
 // x |= (x & (FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP) == FLAGSTAT_FMUNMAP) & 1 << 14
 
+static
+int FLAGSTAT_scalar(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    for (uint32_t i = 0; i < len; ++i) {
+        FLAGSTAT_scalar_update(array[i], flags);
+    }
+}
+
 #if defined(STORM_HAVE_SSE42)
 
 #include <immintrin.h>
@@ -907,6 +914,53 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
 }
 #endif // end AVX512
 
+static
+uint64_t FLAGSTATS_u16(const uint16_t* array, uint32_t n_len, uint32_t* flags)
+{
+
+#if defined(STORM_HAVE_CPUID)
+    #if defined(__cplusplus)
+    /* C++11 thread-safe singleton */
+    static const int cpuid = STORM_get_cpuid();
+    #else
+    static int cpuid_ = -1;
+    int cpuid = cpuid_;
+    if (cpuid == -1) {
+        cpuid = STORM_get_cpuid();
+
+        #if defined(_MSC_VER)
+        _InterlockedCompareExchange(&cpuid_, cpuid, -1);
+        #else
+        __sync_val_compare_and_swap(&cpuid_, -1, cpuid);
+        #endif
+    }
+    #endif
+#endif
+
+#if defined(STORM_HAVE_AVX512)
+    if ((cpuid & STORM_CPUID_runtime_bit_AVX512BW) && n_len >= 1024) { // 16*512
+        return FLAGSTAT_avx512(array, n_len, flags);
+    }
+#endif
+
+#if defined(STORM_HAVE_AVX2)
+    if ((cpuid & STORM_CPUID_runtime_bit_AVX2) && n_len >= 512) { // 16*256
+        return FLAGSTAT_avx2(array, n_len, flags);
+    }
+    
+    if ((cpuid & STORM_CPUID_runtime_bit_SSE42) && n_len >= 256) { // 16*128
+        return FLAGSTAT_sse4(array, n_len, flags);
+    }
+#endif
+
+#if defined(STORM_HAVE_SSE42)
+    if ((cpuid & STORM_CPUID_runtime_bit_SSE42) && n_len >= 256) { // 16*128
+        return FLAGSTAT_sse4(array, n_len, flags);
+    }
+#endif
+
+    return FLAGSTAT_scalar(array, n_len, flags);
+}
 
 #ifdef __cplusplus
 } /* extern "C" */

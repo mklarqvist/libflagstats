@@ -1,11 +1,22 @@
 # FlagStats
 
-These functions compute the summary statistics for the SAM FLAG field (flagstat) using fast SIMD instructions. They are based on the [positional-popcount](https://github.com/mklarqvist/positional-popcount) (`pospopcnt`) subroutines and assumes that data is available as contiguous streams (e.g. column projection). In this example, we use block sizes of 512k records (1 MB).
-Currently, this example requires AVX-256 but is easily rewritten to support any instruction set.
+These functions compute the summary statistics for the SAM FLAG field (flagstat)
+using fast SIMD instructions. They are based on the
+[positional-popcount](https://github.com/mklarqvist/positional-popcount)
+(`pospopcnt`) subroutines and assumes that data is available as contiguous
+streams (e.g. column projection). In this example, we use block sizes of 512k
+records (1 MB). Currently, this example requires AVX-256 but is easily rewritten
+to support any instruction set.
 
 ## Speedup
 
-This benchmark shows the speedup of the pospopcnt algorithms compared to [samtools](https://github.com/samtools/samtools) using a human HiSeqX readset with 824,541,892 reads. See [Results](#results) for additional information. On this readset, the pospopcnt-based functions are 2562.4-fold faster compared to BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not have column projection capabilities. Around 80% of the CPU time is spent retrieving data from disk for the `pospopcnt`-functions.
+This benchmark shows the speedup of the pospopcnt algorithms compared to
+[samtools](https://github.com/samtools/samtools) using a human HiSeqX readset
+with 824,541,892 reads. See [Results](#results) for additional information. On
+this readset, the pospopcnt-based functions are 2562.4-fold faster compared to
+BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not
+have column projection capabilities. Around 80% of the CPU time is spent
+retrieving data from disk for the `pospopcnt`-functions.
 
 | Approach        | Time       | Speedup |
 |-----------------|------------|---------|
@@ -13,7 +24,10 @@ This benchmark shows the speedup of the pospopcnt algorithms compared to [samtoo
 | Samtools – CRAM | 4m 50.68s  | 6.36    |
 | flagstats       | 0.72s      | 2569.53 |
 
-We also directly compared the potential speed of the naive flagstat subroutine in samtools againt these functions if samtools would be rewritten with efficient column projection and the compression method changed to LZ4. In this context, these functions are still 6.58-fold faster.
+We also directly compared the potential speed of the naive flagstat subroutine
+in samtools againt these functions if samtools would be rewritten with efficient
+column projection and the compression method changed to LZ4. In this context,
+these functions are still 6.58-fold faster.
 
 | Approach             | Time   | Speedup |
 |----------------------|--------|---------|
@@ -22,7 +36,9 @@ We also directly compared the potential speed of the naive flagstat subroutine i
 
 ### Usage
 
-For Linux/Mac: Compile the test suite with: `make`. LZ4 and Zstd needs to be installed on the target machine or pass the `LZ4_PATH` and `ZSTD_PATH` flags to make for non-standard locations.
+For Linux/Mac: Compile the test suite with: `make`. LZ4 and Zstd needs to be
+installed on the target machine or pass the `LZ4_PATH` and `ZSTD_PATH` flags to
+make for non-standard locations.
 
 First, import 2-byte FLAG words from a SAM file:
 ```bash
@@ -36,7 +52,8 @@ for i in {1..10}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bi
 for i in {1..20}; do ./flagstats compress -i NA12878D_HiSeqX_R12_GRCh37_flags.bin -z -c $i; done
 ```
 
-Evaluate the flagstat subroutines by first decompressing the file twice while clearing cache and then computing samtools and pospopcnt.
+Evaluate the flagstat subroutines by first decompressing the file twice while
+clearing cache and then computing samtools and pospopcnt.
 ```bash
 for i in {1..10}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_HC_c${i}.lz4; done
 for i in {1..10}; do ./flagstats decompress -i /media/mdrk/NVMe/NA12878D_HiSeqX_R12_GRCh37_flags.bin_fast_a${i}.lz4; done
@@ -49,7 +66,10 @@ These functions were developed for [pil](https://github.com/mklarqvist/pil).
 
 ## Problem statement
 
-The FLAG field in the [SAM interchange format](https://github.com/samtools/hts-specs) is defined as the union of [1-hot](https://en.wikipedia.org/wiki/One-hot) encoded states for a given read. For example, the following three states evaluating to true
+The FLAG field in the [SAM interchange
+format](https://github.com/samtools/hts-specs) is defined as the union of
+[1-hot](https://en.wikipedia.org/wiki/One-hot) encoded states for a given read.
+For example, the following three states evaluating to true
 
 ```
 00000001: read paired
@@ -59,7 +79,8 @@ The FLAG field in the [SAM interchange format](https://github.com/samtools/hts-s
 01001001: Decimal (73)
 ```
 
-are stored in a packed 16-bit value (only the LSB is shown here). There are 12 states described in the SAM format:
+are stored in a packed 16-bit value (only the LSB is shown here). There are 12
+states described in the SAM format:
 
 | One-hot           | Description                               |
 |-------------------|-------------------------------------------|
@@ -76,13 +97,17 @@ are stored in a packed 16-bit value (only the LSB is shown here). There are 12 s
 | 00000100 00000000 | Read is PCR or optical duplicate          |
 | 00001000 00000000 | Supplementary alignment                   |
 
-Computing FLAG statistics from readsets involves iteratively incrementing up to 16 counters. The native properties of a column-oriented storage, specifically column projection, already deliver good performance because of data locality (memory contiguity) and value typing. We want to maximize compute on large arrays of values by exploiting vectorized instructions, if available.
+Computing FLAG statistics from readsets involves iteratively incrementing up to
+16 counters. The native properties of a column-oriented storage, specifically
+column projection, already deliver good performance because of data locality
+(memory contiguity) and value typing. We want to maximize compute on large
+arrays of values by exploiting vectorized instructions, if available.
 
 ## Goals
 
 * Achieve high-performance on large arrays of values.
 * Support machines without SIMD (scalar).
-* Specialized algorithms for SSE2 up to AVX512.
+* Specialized algorithms for SSE4 up to AVX512.
 
 ## Technical approach
 
@@ -154,9 +179,9 @@ $ time samtools flagstat NA12878D_HiSeqX_R12_GRCh37.bam
 9537902 + 0 with mate mapped to a different chr
 4425946 + 0 with mate mapped to a different chr (mapQ>=5)
 
-real	30m50.059s
-user	30m10.638s
-sys	0m38.440s
+real    30m50.059s
+user    30m10.638s
+sys 0m38.440s
 ```
 
 ```bash
@@ -175,30 +200,9 @@ $ time samtools flagstat NA12878D_HiSeqX_R12_GRCh37.cram
 9537902 + 0 with mate mapped to a different chr
 4425946 + 0 with mate mapped to a different chr (mapQ>=5)
 
-real	4m50.684s
-user	3m37.394s
-sys	1m12.396s
-```
-
-```c
-static inline
-void flagstat_loop_branchless(bam_flagstat_t* s, uint16_t* inflags, const uint32_t i) {
-    int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0; // QC redirect.
-    ++(s)->n_reads[w];
-    (s)->n_mapped[w] += (inflags[i] & BAM_FUNMAP) == 0; // this is implicit
-    (s)->n_dup[w] += (inflags[i] & BAM_FDUP) >> 10;
-    (s)->n_secondary[w] += (inflags[i] & BAM_FSECONDARY) >> 8;
-    inflags[i] &= lookup_sec[(inflags[i] & BAM_FSECONDARY) >> 8];
-    (s)->n_supp[w] += (inflags[i] & BAM_FSUPPLEMENTARY) >> 11;
-    inflags[i] &= lookup_sup[(inflags[i] & BAM_FSUPPLEMENTARY) >> 11];
-    inflags[i] &= lookup_pair[inflags[i] & BAM_FPAIRED];
-    (s)->n_pair_all[w]  += (inflags[i] & BAM_FPAIRED);
-    (s)->n_pair_map[w]  += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP + BAM_FSECONDARY + BAM_FSUPPLEMENTARY)) == 0);
-    (s)->n_pair_good[w] += ((inflags[i] & (BAM_FPROPER_PAIR + BAM_FUNMAP)) == BAM_FPROPER_PAIR);
-    (s)->n_read1[w] += (inflags[i] & BAM_FREAD1) >> 6;
-    (s)->n_read2[w] += (inflags[i] & BAM_FREAD2) >> 7;
-    (s)->n_sgltn[w] += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP);
-}
+real    4m50.684s
+user    3m37.394s
+sys 1m12.396s
 ```
 
 ```c

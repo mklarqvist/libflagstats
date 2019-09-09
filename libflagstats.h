@@ -60,7 +60,11 @@
 ***************************************/
 #include "libalgebra.h"
 
-// From sam.h
+/* *************************************
+*  Target SAM fields
+***************************************/
+
+// Modified from sam.h
 /*! @abstract the read is paired in sequencing, no matter whether it is mapped in a pair */
 #define FLAGSTAT_FPAIRED               1
 #define FLAGSTAT_FPAIRED_OFF           0

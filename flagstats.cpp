@@ -15,19 +15,13 @@
 * specific language governing permissions and limitations
 * under the License.
 */
-#include "lz4.h" // lz4
-#include "lz4hc.h"
-#include "zstd.h" // zstd
-#include "zstd_errors.h"
-#include <cstring> // memcpy
-#include "libalgebra.h" // pospopcnt
-#include "libflagstats.h" // flagstats
 
+#include <cstring> // memcpy
 #include <stdio.h>  // For printf()
 #include <string.h> // For memcmp()
 #include <stdlib.h> // For exit()
+#include <getopt.h> // options
 
-//
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -37,7 +31,13 @@
 #include <unistd.h>//sync
 #include <bitset>
 
-#include "getopt.h" // options
+#include "lz4.h" // lz4
+#include "lz4hc.h"
+#include "zstd.h" // zstd
+// #include "zstd_errors.h"
+#include "libalgebra.h" // pospopcnt
+#include "libflagstats.h" // flagstats
+
 
 // @see: https://stackoverflow.com/questions/6818606/how-to-programmatically-clear-the-filesystem-memory-cache-in-c-on-a-linux-syst
 void clear_cache() {
@@ -339,6 +339,57 @@ int lz4_decompress(const std::string& file, int method = 1) {
     return 1;
 }
 
+int flagstat_raw(const std::string& file) {
+    std::size_t found = file.find(".bin");
+    std::string file2;
+    if (found != std::string::npos) {
+        // std::cerr << "first 'needle' found at: " << found << '\n';
+        std::cerr << "file new=" << file.substr(0, found + 4) << std::endl;
+        file2 = file.substr(0, found + 4);
+    } else {
+        return -1;
+    }
+    
+    std::ifstream f(file2, std::ios::in | std::ios::binary | std::ios::ate);
+    if (f.good() == false) {
+        std::cerr << "file not good" << std::endl;
+        return 0;
+    }
+    int64_t filesize = f.tellg();
+    f.seekg(0);
+    // std::cerr << "filesize=" << filesize << std::endl;
+    
+    // uint8_t* buffer = new uint8_t[1024000];
+    uint8_t* out_buffer = (uint8_t*)STORM_aligned_malloc(STORM_get_alignment(), 1024000);
+    uint32_t counters[16*2] = {0}; // flags
+    uint64_t tot_flags = 0;
+
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+
+    while (f.good()) {
+        f.read((char*)out_buffer, 1024000);
+        size_t read = f.gcount();
+        // std::cerr << "Read " << read << std::endl;
+
+        FLAGSTAT_avx2((uint16_t*)out_buffer, read/2, counters);
+        
+        if (f.tellg() == filesize) break;
+    }
+
+    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+    auto time_span = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+    std::cerr << "[RAW " << file << "] Time elapsed " << time_span.count() << " ms " << tot_flags << std::endl;
+
+    std::cerr << "Tot flags=" << tot_flags << std::endl;
+    // std::cerr << "Pass QC" << std::endl;
+    for (int i = 0; i < 15; ++i) {
+        std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << "\t" << counters[16+i] << std::endl;
+    }
+
+    STORM_aligned_free(out_buffer);
+    return 1;
+}
+
 // samtools count flagstat different:
 // https://github.com/samtools/samtools/blob/master/bam_stat.c#L47
 typedef struct {
@@ -408,91 +459,14 @@ int lz4_decompress_samtools(const std::string& file) {
         if (decompressed_size == 0)
             run_screaming("I'm not sure this function can ever return 0. Documentation in lz4.h doesn't indicate so.", 1);
 
-        // assert(decompressed_size == uncompresed_size);
-
         const uint32_t N = uncompresed_size >> 1;
         tot_flags += N;
 
         uint16_t* inflags = (uint16_t*)out_buffer;
-        // Rules:
-        // Always: !4,1024
-        // Rule1: 256 only
-        // Rule2: 2048 only
-        // Rule3: 1
-        //        2 + 4 == 2
-        //        64
-        //        128
-        //        8 + 4 == 8
-        //        8 + 4 == 0
         for (int i = 0; i < N; ++i) {
-                flagstat_loop(s, inflags[i]);
-                // flagstat_loop_branchless(s, inflags, i);
-            
-            // if (1) {
-            //     int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0;
-            //     ++(s)->n_reads[w];
-            //     if (inflags[i] & BAM_FSECONDARY) { // If secondary then count nothing
-            //         ++(s)->n_secondary[w];
-            //     } else if (inflags[i] & BAM_FSUPPLEMENTARY) { // If supplementary then count nothing
-            //         ++(s)->n_supp[w];
-            //     } else if (inflags[i] & BAM_FPAIRED) { // If paired then count the paired information
-            //         ++(s)->n_pair_all[w];
-
-            //         // If proper pair and not unmapped.
-            //         if ((inflags[i] & (BAM_FPROPER_PAIR + BAM_FUNMAP)) == BAM_FPROPER_PAIR) ++(s)->n_pair_good[w];
-            //         // if ((inflags[i] & BAM_FPROPER_PAIR) && !(inflags[i] & BAM_FUNMAP) ) ++(s)->n_pair_good[w];
-            //         // Read 1.
-            //         if (inflags[i] & BAM_FREAD1) ++(s)->n_read1[w];
-            //         // Read 2.
-            //         if (inflags[i] & BAM_FREAD2) ++(s)->n_read2[w];
-            //         // Mate is unmapped but read is mapped.
-            //         if ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP) ++(s)->n_sgltn[w];
-            //         // (s)->n_sgltn[w] += !!((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP);
-
-            //         // if ((inflags[i] & BAM_FMUNMAP) && !(inflags[i] & BAM_FUNMAP))  ++(s)->n_sgltn[w];
-            //         // Mate is mapped and read is mapped.
-            //         // if (!(inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == 0) ++(s)->n_pair_map[w];
-            //         if (!(inflags[i] & BAM_FUNMAP) && !(inflags[i] & BAM_FMUNMAP)) ++(s)->n_pair_map[w];
-            //     }
-            //     if (!(inflags[i] & BAM_FUNMAP)) ++(s)->n_mapped[w];
-            //     if (inflags[i] & BAM_FDUP) ++(s)->n_dup[w];
-            // }
-            
-            /*
-            // QC redirect.
-            int w = (inflags[i] & BAM_FQCFAIL) ? 1 : 0;
-            
-            // Always.
-            ++(s)->n_reads[w];
-            (s)->n_mapped[w] += (inflags[i] & BAM_FUNMAP) == 0; // this is implicit
-            (s)->n_dup[w] += (inflags[i] & BAM_FDUP) >> 10;
-
-            // Rule 1.
-            (s)->n_secondary[w] += (inflags[i] & BAM_FSECONDARY) >> 8;
-            inflags[i] &= lookup_sec[(inflags[i] & BAM_FSECONDARY) >> 8];
-            
-            // Rule 2.
-            (s)->n_supp[w] += (inflags[i] & BAM_FSUPPLEMENTARY) >> 11;
-            inflags[i] &= lookup_sup[(inflags[i] & BAM_FSUPPLEMENTARY) >> 11];
-            // Mask operation: x[i] & ((x[i] & (256 + 2048)) > 0)
-            // Need to keep 4 + 1024 for Always rule and 256 and 2048 for Rule 1 and Rule 2.
-            // Mask operation: x[i] & (((x[i] & (256 + 2048)) > 0) | (4 + 1024 + 256 + 2048))
-            
-            // Rule 3.
-            // Mask can be written as ((x[i] & 1) == 1)
-            // True map to FFFF and False to 0000.
-            // Therefore: x[i] & (((x[i] & 1) == 1) is either x[i] or 0.
-            inflags[i] &= lookup_pair[inflags[i] & BAM_FPAIRED];
-            (s)->n_pair_all[w]  += (inflags[i] & BAM_FPAIRED);
-            (s)->n_pair_map[w]  += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP + BAM_FSECONDARY + BAM_FSUPPLEMENTARY)) == 0); // 8 + 4 + 256 + 2048
-            (s)->n_pair_good[w] += ((inflags[i] & (BAM_FPROPER_PAIR + BAM_FUNMAP)) == BAM_FPROPER_PAIR);
-            (s)->n_read1[w] += (inflags[i] & BAM_FREAD1) >> 6;
-            (s)->n_read2[w] += (inflags[i] & BAM_FREAD2) >> 7;
-            (s)->n_sgltn[w] += ((inflags[i] & (BAM_FMUNMAP + BAM_FUNMAP)) == BAM_FMUNMAP);
-            */
+            flagstat_loop(s, inflags[i]);
         }
 
-        // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
         if (f.tellg() == filesize) break;
     }
 
@@ -500,28 +474,20 @@ int lz4_decompress_samtools(const std::string& file) {
     auto time_span = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
     std::cerr << "[LZ4 " << file << "] Time elapsed " << time_span.count() << " ms " << tot_flags << std::endl;
 
-    // std::cerr << "Tot flags=" << tot_flags << std::endl;
-    // for (int i = 0; i < 12; ++i) {
-    //     std::cerr << SAM_FLAG_NAME[i] << "\t" << counters[i] << std::endl;
-    // }
-
-    // s = bam_flagstat_core(fp, header);
-    if (1) {
-        char b0[16], b1[16];
-        printf("%lld + %lld in total (QC-passed reads + QC-failed reads)\n", s->n_reads[0], s->n_reads[1]);
-        printf("%lld + %lld secondary\n", s->n_secondary[0], s->n_secondary[1]);
-        printf("%lld + %lld supplementary\n", s->n_supp[0], s->n_supp[1]);
-        printf("%lld + %lld duplicates\n", s->n_dup[0], s->n_dup[1]);
-        printf("%lld + %lld mapped (%s : %s)\n", s->n_mapped[0], s->n_mapped[1], percent(b0, s->n_mapped[0], s->n_reads[0]), percent(b1, s->n_mapped[1], s->n_reads[1]));
-        printf("%lld + %lld paired in sequencing\n", s->n_pair_all[0], s->n_pair_all[1]);
-        printf("%lld + %lld read1\n", s->n_read1[0], s->n_read1[1]);
-        printf("%lld + %lld read2\n", s->n_read2[0], s->n_read2[1]);
-        printf("%lld + %lld properly paired (%s : %s)\n", s->n_pair_good[0], s->n_pair_good[1], percent(b0, s->n_pair_good[0], s->n_pair_all[0]), percent(b1, s->n_pair_good[1], s->n_pair_all[1]));
-        printf("%lld + %lld with itself and mate mapped\n", s->n_pair_map[0], s->n_pair_map[1]);
-        printf("%lld + %lld singletons (%s : %s)\n", s->n_sgltn[0], s->n_sgltn[1], percent(b0, s->n_sgltn[0], s->n_pair_all[0]), percent(b1, s->n_sgltn[1], s->n_pair_all[1]));
-        // printf("%lld + %lld with mate mapped to a different chr\n", s->n_diffchr[0], s->n_diffchr[1]);
-        // printf("%lld + %lld with mate mapped to a different chr (mapQ>=5)\n", s->n_diffhigh[0], s->n_diffhigh[1]);
-    }
+    char b0[16], b1[16];
+    printf("%lld + %lld in total (QC-passed reads + QC-failed reads)\n", s->n_reads[0], s->n_reads[1]);
+    printf("%lld + %lld secondary\n", s->n_secondary[0], s->n_secondary[1]);
+    printf("%lld + %lld supplementary\n", s->n_supp[0], s->n_supp[1]);
+    printf("%lld + %lld duplicates\n", s->n_dup[0], s->n_dup[1]);
+    printf("%lld + %lld mapped (%s : %s)\n", s->n_mapped[0], s->n_mapped[1], percent(b0, s->n_mapped[0], s->n_reads[0]), percent(b1, s->n_mapped[1], s->n_reads[1]));
+    printf("%lld + %lld paired in sequencing\n", s->n_pair_all[0], s->n_pair_all[1]);
+    printf("%lld + %lld read1\n", s->n_read1[0], s->n_read1[1]);
+    printf("%lld + %lld read2\n", s->n_read2[0], s->n_read2[1]);
+    printf("%lld + %lld properly paired (%s : %s)\n", s->n_pair_good[0], s->n_pair_good[1], percent(b0, s->n_pair_good[0], s->n_pair_all[0]), percent(b1, s->n_pair_good[1], s->n_pair_all[1]));
+    printf("%lld + %lld with itself and mate mapped\n", s->n_pair_map[0], s->n_pair_map[1]);
+    printf("%lld + %lld singletons (%s : %s)\n", s->n_sgltn[0], s->n_sgltn[1], percent(b0, s->n_sgltn[0], s->n_pair_all[0]), percent(b1, s->n_sgltn[1], s->n_pair_all[1]));
+    // printf("%lld + %lld with mate mapped to a different chr\n", s->n_diffchr[0], s->n_diffchr[1]);
+    // printf("%lld + %lld with mate mapped to a different chr (mapQ>=5)\n", s->n_diffhigh[0], s->n_diffhigh[1]);
     free(s);
 
     return 1;
@@ -567,7 +533,7 @@ int zstd_decompress_only(const std::string& file) {
     return 1;
 }
 
-int zstd_decompress(const std::string& file) {
+int zstd_decompress(const std::string& file, int method = 1) {
     std::ifstream f(file, std::ios::in | std::ios::binary | std::ios::ate);
     if (f.good() == false) return 0;
     int64_t filesize = f.tellg();
@@ -582,21 +548,40 @@ int zstd_decompress(const std::string& file) {
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
-    while (f.good()) {
-        f.read((char*)&uncompresed_size, sizeof(int32_t));
-        f.read((char*)&compressed_size, sizeof(int32_t));
-        f.read((char*)buffer, compressed_size);
+    if (method == 1) {
+        while (f.good()) {
+            f.read((char*)&uncompresed_size, sizeof(int32_t));
+            f.read((char*)&compressed_size, sizeof(int32_t));
+            f.read((char*)buffer, compressed_size);
 
-        const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
-        // assert(decompressed_size == uncompresed_size);
+            const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
+            // assert(decompressed_size == uncompresed_size);
 
-        const uint32_t N = uncompresed_size >> 1;
-        tot_flags += N;
-        // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-        FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
+            const uint32_t N = uncompresed_size >> 1;
+            tot_flags += N;
+            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+            FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
 
-        // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
-        if (f.tellg() == filesize) break;
+            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+            if (f.tellg() == filesize) break;
+        }
+    } else {
+        while (f.good()) {
+            f.read((char*)&uncompresed_size, sizeof(int32_t));
+            f.read((char*)&compressed_size, sizeof(int32_t));
+            f.read((char*)buffer, compressed_size);
+
+            const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
+            // assert(decompressed_size == uncompresed_size);
+
+            const uint32_t N = uncompresed_size >> 1;
+            tot_flags += N;
+            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+            FLAGSTAT_sse4((uint16_t*)out_buffer,N,counters);
+
+            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+            if (f.tellg() == filesize) break;
+        }
     }
 
     std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
@@ -818,9 +803,15 @@ int decompress(int argc, char** argv) {
         clear_cache();
         zstd_decompress_only(input);
         clear_cache();
+        flagstat_raw(input);
+        clear_cache();
+        flagstat_raw(input);
+        clear_cache();
         zstd_decompress_samtools(input);
         clear_cache();
-        zstd_decompress(input);
+        zstd_decompress(input, 1);
+        clear_cache();
+        zstd_decompress(input, 2);
     }
     
     if (method == 2) {
@@ -828,6 +819,10 @@ int decompress(int argc, char** argv) {
         lz4_decompress_only(input); // warmup
         clear_cache();
         lz4_decompress_only(input);
+        clear_cache();
+        flagstat_raw(input);
+        clear_cache();
+        flagstat_raw(input);
         clear_cache();
         lz4_decompress_samtools(input);
         clear_cache();

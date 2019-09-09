@@ -106,17 +106,20 @@
 extern "C" {
 #endif
 
-void FLAGSTAT_samtools_single_update(uint16_t val, uint32_t* flags) {
+void FLAGSTAT_scalar_update(uint16_t val, uint32_t* flags) {
     // If the FLAGSTAT_FQCFAIL is set the data is shift 16 values to
     // the right to distinguish between statistics for data
     // that failed and passed quality control.
     const int offset = ( (val & FLAGSTAT_FQCFAIL) == 0 ) ? 0 : 16;
+    // Count only reads that with FLAGSTAT_FQCFAIL set. The other
+    // reads are implicitly known and computed at the end of
+    // FLAGSTAT_* functions.
     if (offset) ++flags[offset + FLAGSTAT_FQCFAIL_OFF];
 
     if (val & FLAGSTAT_FSECONDARY) ++flags[offset + FLAGSTAT_FSECONDARY_OFF];
     else if (val & FLAGSTAT_FSUPPLEMENTARY) ++flags[offset + FLAGSTAT_FSUPPLEMENTARY_OFF];
     else if (val & FLAGSTAT_FPAIRED) {
-        // ++(s)->n_pair_all[w];                
+        // ++(s)->n_pair_all[w];              
         if ( (val & FLAGSTAT_FPROPER_PAIR) && !(val & FLAGSTAT_FUNMAP) ) ++flags[offset + 12];
         if (val & FLAGSTAT_FREAD1) ++flags[offset + FLAGSTAT_FREAD1_OFF];
         if (val & FLAGSTAT_FREAD2) ++flags[offset + FLAGSTAT_FREAD2_OFF];
@@ -127,30 +130,26 @@ void FLAGSTAT_samtools_single_update(uint16_t val, uint32_t* flags) {
     if (val & FLAGSTAT_FDUP)      ++flags[offset + FLAGSTAT_FDUP_OFF];
 }
 
-#define SAMTOOLS_flagstat_loop(s, c) do {                      \
-    int w = (c & FLAGSTAT_FQCFAIL)? 1 : 0;                       \
-    ++(s)->n_reads[w];                                      \
-    if (c & FLAGSTAT_FSECONDARY ) {                              \
-        ++(s)->n_secondary[w];                              \
-    } else if (c & FLAGSTAT_FSUPPLEMENTARY ) {                   \
-        ++(s)->n_supp[w];                                   \
-    } else if (c & FLAGSTAT_FPAIRED) {                           \
-        ++(s)->n_pair_all[w];                               \
-        if ( (c & FLAGSTAT_FPROPER_PAIR) && !(c & FLAGSTAT_FUNMAP) ) ++(s)->n_pair_good[w]; \
-        if (c & FLAGSTAT_FREAD1) ++(s)->n_read1[w];              \
-        if (c & FLAGSTAT_FREAD2) ++(s)->n_read2[w];              \
-        if ((c & FLAGSTAT_FMUNMAP) && !(c & FLAGSTAT_FUNMAP)) ++(s)->n_sgltn[w]; \
-        if (!(c & FLAGSTAT_FUNMAP) && !(c & FLAGSTAT_FMUNMAP)) {      \
-            ++(s)->n_pair_map[w];                           \
-        }                                                   \
-    }                                                       \
-    if (!(c & FLAGSTAT_FUNMAP)) ++(s)->n_mapped[w];              \
-    if (c & FLAGSTAT_FDUP) ++(s)->n_dup[w];                      \
-} while (0)
-
-// x = ((x & FLAGSTAT_FSECONDARY) == FLAGSTAT_FSECONDARY) & (FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP)
-// x = ((x & FLAGSTAT_FSUPPLEMENTARY) == FLAGSTAT_FSUPPLEMENTARY) & (FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP)
-// x = ((x & FLAGSTAT_FPAIRED) == FLAGSTAT_FPAIRED) & (FLAGSTAT_FUNMAP + FLAGSTAT_FDUP + FLAGSTAT_FPAIRED + FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FREAD1 + FLAGSTAT_FREAD2 + FLAGSTAT_FMUNMAP)
+// #define SAMTOOLS_flagstat_loop(s, c) do {                   \
+//     int w = (c & FLAGSTAT_FQCFAIL)? 1 : 0;                  \
+//     ++(s)->n_reads[w];                                      \
+//     if (c & FLAGSTAT_FSECONDARY ) {                         \
+//         ++(s)->n_secondary[w];                              \
+//     } else if (c & FLAGSTAT_FSUPPLEMENTARY ) {              \
+//         ++(s)->n_supp[w];                                   \
+//     } else if (c & FLAGSTAT_FPAIRED) {                      \
+//         ++(s)->n_pair_all[w];                               \
+//         if ( (c & FLAGSTAT_FPROPER_PAIR) && !(c & FLAGSTAT_FUNMAP) ) ++(s)->n_pair_good[w]; \
+//         if (c & FLAGSTAT_FREAD1) ++(s)->n_read1[w];         \
+//         if (c & FLAGSTAT_FREAD2) ++(s)->n_read2[w];         \
+//         if ((c & FLAGSTAT_FMUNMAP) && !(c & FLAGSTAT_FUNMAP)) ++(s)->n_sgltn[w]; \
+//         if (!(c & FLAGSTAT_FUNMAP) && !(c & FLAGSTAT_FMUNMAP)) {      \
+//             ++(s)->n_pair_map[w];                           \
+//         }                                                   \
+//     }                                                       \
+//     if (!(c & FLAGSTAT_FUNMAP)) ++(s)->n_mapped[w];         \
+//     if (c & FLAGSTAT_FDUP) ++(s)->n_dup[w];                 \
+// } while (0)
 
 // FLAGSTAT_FPROPER_PAIR & !FLAGSTAT_FUNMAP
 // x |= (x & (FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP) == FLAGSTAT_FPROPER_PAIR) & 1 << 13
@@ -167,7 +166,7 @@ int FLAGSTAT_sse4(const uint16_t* array, uint32_t len, uint32_t* flags) {
     const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
     
     for (uint32_t i = len - (len % (16 * 8)); i < len; ++i) {
-        FLAGSTAT_samtools_single_update(array[i], flags);
+        FLAGSTAT_scalar_update(array[i], flags);
     }
 
     const __m128i* data = (const __m128i*)array;
@@ -214,24 +213,51 @@ int FLAGSTAT_sse4(const uint16_t* array, uint32_t len, uint32_t* flags) {
             thislimit = i + (1 << 16) - 1;
 
         ///////////////////////////////////////////////////////////////////////
-        // We load a register of data (data + i + j) and then using a the
-        // resulting mask from a VPCMPEQW instruction comparing equality with
-        // the mask mask1 (FLAGSTAT_FSECONDARY + FLAGSTAT_FSUPPLEMENTARY). The resulting
-        // data is either the original data or empty as DATA & (00...0) is a
-        // zero register and DATA & (11...1) is the data itself. The resulting
-        // data is combined (bitwise or) with the mask mask2 as this information
-        // is required.
+        // We load a register of data (data + i + j) and then construct the
+        // conditional bits: 
+        // 12: FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP == FLAGSTAT_FPROPER_PAIR
+        // 13: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == FLAGSTAT_FMUNMAP
+        // 14: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == 0
+        //
+        // These construction of these bits can be described for data x as:
+        // x |= (x & LEFT_MASK == RIGHT_MASK) & 1 << TARGET_BIT
+        // with the assumption that predicate evaluatons result in the selection
+        // masks (00...0) or (11...1) for FALSE and TRUE, respectively. These
+        // construction macros are named O1, O2, and O3.
+        //
+        // The original SAMtools method is also heavily branched with three
+        // main branch points:
+        // If FLAGSTAT_FSECONDARY then count FLAGSTAT_FSECONDARY
+        // If FLAGSTAT_FSUPPLEMENTARY then count FLAGSTAT_FSUPPLEMENTARY
+        // Else then count FLAGSTAT_FREAD1, 
+        //                 FLAGSTAT_FREAD2,
+        //                 Special bit 12, 13, and 14
+        // Always count FLAGSTAT_FUNMAP, 
+        //              FLAGSTAT_FDUP, 
+        //              FLAGSTAT_FQCFAIL
+        //
+        // These bits can be selected using a mask-select propagate-carry approach:
+        // x &= x & ((x == MASK) | CARRY_BITS)
+        // with the arguments for MASK and CARRY_BITS as follows:
+        //    1. {FLAGSTAT_FSECONDARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    2. {FLAGSTAT_FSUPPLEMENTARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    3. {FLAGSTAT_FPAIRED, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
         //
         // FLAGSTATS outputs summary statistics separately for reads that pass
         // QC and those that do not. Therefore we need to partition the data
         // into these two classes. For data that pass QC, the L registers, we
-        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask mask3. The
-        // resulting data is used to perform another mask-select using VPCMPEQW
-        // against the empty vector (00...0). As above, if the data has the
-        // FLAGSTAT_FQCFAIL bit set then this register will be zeroed out. The exact
-        // process is performed for reads that fail QC, the LU registers, with
-        // the difference that mask-selection is based on the one vector
-        // (00...1).
+        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask
+        // mask3. The resulting data is used to perform another mask-select
+        // using VPCMPEQW against the empty vector (00...0). As above, if the
+        // data has the FLAGSTAT_FQCFAIL bit set then this register will be
+        // zeroed out. The exact process is performed for reads that fail QC,
+        // the LU registers, with the difference that mask-selection is based on
+        // the one vector (00...1).
 
 #define W(j) __m128i data##j = _mm_loadu_si128(data + i + j);
 #define O1(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP)), _mm_set1_epi16(FLAGSTAT_FPROPER_PAIR)) & one, 12); 
@@ -398,7 +424,7 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
     const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
     
     for (uint32_t i = len - (len % (16 * 16)); i < len; ++i) {
-        FLAGSTAT_samtools_single_update(array[i], flags);
+        FLAGSTAT_scalar_update(array[i], flags);
     }
 
     const __m256i* data = (const __m256i*)array;
@@ -445,24 +471,51 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
             thislimit = i + (1 << 16) - 1;
 
         ///////////////////////////////////////////////////////////////////////
-        // We load a register of data (data + i + j) and then using a the
-        // resulting mask from a VPCMPEQW instruction comparing equality with
-        // the mask mask1 (FLAGSTAT_FSECONDARY + FLAGSTAT_FSUPPLEMENTARY). The resulting
-        // data is either the original data or empty as DATA & (00...0) is a
-        // zero register and DATA & (11...1) is the data itself. The resulting
-        // data is combined (bitwise or) with the mask mask2 as this information
-        // is required.
+        // We load a register of data (data + i + j) and then construct the
+        // conditional bits: 
+        // 12: FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP == FLAGSTAT_FPROPER_PAIR
+        // 13: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == FLAGSTAT_FMUNMAP
+        // 14: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == 0
+        //
+        // These construction of these bits can be described for data x as:
+        // x |= (x & LEFT_MASK == RIGHT_MASK) & 1 << TARGET_BIT
+        // with the assumption that predicate evaluatons result in the selection
+        // masks (00...0) or (11...1) for FALSE and TRUE, respectively. These
+        // construction macros are named O1, O2, and O3.
+        //
+        // The original SAMtools method is also heavily branched with three
+        // main branch points:
+        // If FLAGSTAT_FSECONDARY then count FLAGSTAT_FSECONDARY
+        // If FLAGSTAT_FSUPPLEMENTARY then count FLAGSTAT_FSUPPLEMENTARY
+        // Else then count FLAGSTAT_FREAD1, 
+        //                 FLAGSTAT_FREAD2,
+        //                 Special bit 12, 13, and 14
+        // Always count FLAGSTAT_FUNMAP, 
+        //              FLAGSTAT_FDUP, 
+        //              FLAGSTAT_FQCFAIL
+        //
+        // These bits can be selected using a mask-select propagate-carry approach:
+        // x &= x & ((x == MASK) | CARRY_BITS)
+        // with the arguments for MASK and CARRY_BITS as follows:
+        //    1. {FLAGSTAT_FSECONDARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    2. {FLAGSTAT_FSUPPLEMENTARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    3. {FLAGSTAT_FPAIRED, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
         //
         // FLAGSTATS outputs summary statistics separately for reads that pass
         // QC and those that do not. Therefore we need to partition the data
         // into these two classes. For data that pass QC, the L registers, we
-        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask mask3. The
-        // resulting data is used to perform another mask-select using VPCMPEQW
-        // against the empty vector (00...0). As above, if the data has the
-        // FLAGSTAT_FQCFAIL bit set then this register will be zeroed out. The exact
-        // process is performed for reads that fail QC, the LU registers, with
-        // the difference that mask-selection is based on the one vector
-        // (00...1).
+        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask
+        // mask3. The resulting data is used to perform another mask-select
+        // using VPCMPEQW against the empty vector (00...0). As above, if the
+        // data has the FLAGSTAT_FQCFAIL bit set then this register will be
+        // zeroed out. The exact process is performed for reads that fail QC,
+        // the LU registers, with the difference that mask-selection is based on
+        // the one vector (00...1).
 
 #define W(j) __m256i data##j = _mm256_loadu_si256(data + i + j);
 #define O1(j) data##j = data##j | _mm256_slli_epi16(data##j & _mm256_cmpeq_epi16((data##j & _mm256_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP)), _mm256_set1_epi16(FLAGSTAT_FPROPER_PAIR)) & one, 12); 
@@ -626,7 +679,7 @@ STORM_TARGET("avx512bw")
 static
 int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
     for (uint32_t i = len - (len % (32 * 16)); i < len; ++i) {
-        FLAGSTAT_samtools_single_update(array[i], out);
+        FLAGSTAT_scalar_update(array[i], out);
     }
 
     const __m512i* data = (const __m512i*)array;
@@ -669,21 +722,51 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
             thislimit = i + (1 << 16) - 1;
 
         ///////////////////////////////////////////////////////////////////////
-        // We load a register of data (data + i + j) and then using a the resulting mask from
-        // a VPCMPEQW instruction comparing equality with the mask mask1 
-        // (FLAGSTAT_FSECONDARY + FLAGSTAT_FSUPPLEMENTARY). The resulting data is either the original data
-        // or empty as DATA & (00...0) is a zero register and DATA & (11...1) is the data itself. 
-        // The resulting data is combined (bitwise or) with the mask mask2 as this information
-        // is required.
+        // We load a register of data (data + i + j) and then construct the
+        // conditional bits: 
+        // 12: FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP == FLAGSTAT_FPROPER_PAIR
+        // 13: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == FLAGSTAT_FMUNMAP
+        // 14: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == 0
         //
-        // FLAGSTATS outputs summary statistics separately for reads that pass QC and those
-        // that do not. Therefore we need to partition the data into these two classes.
-        // For data that pass QC, the L registers, we first bit-select the target FLAGSTAT_FQCFAIL bit
-        // using the mask mask3. The resulting data is used to perform another mask-select using VPCMPEQW 
-        // against the empty vector (00...0). As above, if the data has the FLAGSTAT_FQCFAIL bit set then
-        // this register will be zeroed out.
-        // The exact process is performed for reads that fail QC, the LU registers, with the difference
-        // that mask-selection is based on the one vector (11...1).
+        // These construction of these bits can be described for data x as:
+        // x |= (x & LEFT_MASK == RIGHT_MASK) & 1 << TARGET_BIT
+        // with the assumption that predicate evaluatons result in the selection
+        // masks (00...0) or (11...1) for FALSE and TRUE, respectively. These
+        // construction macros are named O1, O2, and O3.
+        //
+        // The original SAMtools method is also heavily branched with three
+        // main branch points:
+        // If FLAGSTAT_FSECONDARY then count FLAGSTAT_FSECONDARY
+        // If FLAGSTAT_FSUPPLEMENTARY then count FLAGSTAT_FSUPPLEMENTARY
+        // Else then count FLAGSTAT_FREAD1, 
+        //                 FLAGSTAT_FREAD2,
+        //                 Special bit 12, 13, and 14
+        // Always count FLAGSTAT_FUNMAP, 
+        //              FLAGSTAT_FDUP, 
+        //              FLAGSTAT_FQCFAIL
+        //
+        // These bits can be selected using a mask-select propagate-carry approach:
+        // x &= x & ((x == MASK) | CARRY_BITS)
+        // with the arguments for MASK and CARRY_BITS as follows:
+        //    1. {FLAGSTAT_FSECONDARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    2. {FLAGSTAT_FSUPPLEMENTARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    3. {FLAGSTAT_FPAIRED, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //
+        // FLAGSTATS outputs summary statistics separately for reads that pass
+        // QC and those that do not. Therefore we need to partition the data
+        // into these two classes. For data that pass QC, the L registers, we
+        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask
+        // mask3. The resulting data is used to perform another mask-select
+        // using VPCMPEQW against the empty vector (00...0). As above, if the
+        // data has the FLAGSTAT_FQCFAIL bit set then this register will be
+        // zeroed out. The exact process is performed for reads that fail QC,
+        // the LU registers, with the difference that mask-selection is based on
+        // the one vector (00...1).
 
 #define LOAD(j) __m512i data##j = _mm512_loadu_si512(data + i + j) & (_mm512_cmpeq_epi16_mask( _mm512_loadu_si512(data + i + j) & mask1, zero ) | mask2);
 #define L(j)  data##j & _mm512_cmpeq_epi16_mask( data##j & mask3, zero )

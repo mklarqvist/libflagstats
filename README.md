@@ -3,27 +3,30 @@
 These functions compute the summary statistics for the SAM FLAG field (flagstat)
 using fast SIMD instructions. They are based on the
 [positional-popcount](https://github.com/mklarqvist/positional-popcount)
-(`pospopcnt`) subroutines and assumes that data is available as contiguous
-streams (e.g. column projection). In this example, we use block sizes of 512k
-records (1 MB). The heavily branched and bit-dependent SAMtools code can be
-rewritten using a mask-select propagate-carry approach that feeds into
-Harley-Seal-based carry-save adder networks.
+(`pospopcnt`) subroutines implemented in
+[libalgebra](https://github.com/mklarqvist/libalgebra) and assumes that the data
+is available as contiguous streams (e.g. [column projection](https://en.wikipedia.org/wiki/Projection_(relational_algebra))). The heavily
+branched and bit-dependent [SAMtools](https://github.com/samtools/samtools/) code can be rewritten using a mask-select
+propagate-carry approach that feeds into bit-transposed Harley-Seal-based carry-save adder
+networks.
 
 ## Speedup
 
 This benchmark shows the speedup of the pospopcnt algorithms compared to
 [samtools](https://github.com/samtools/samtools) using a human HiSeqX readset
 with 824,541,892 reads. See [Results](#results) for additional information. On
-this readset, the pospopcnt-based functions are 2562.4-fold faster compared to
+this readset, the pospopcnt-based functions are >3802-fold faster compared to
 BAM and 402.6-fold faster compared to CRAM. Note that the BAM format does not
 have column projection capabilities. Around 80% of the CPU time is spent
-retrieving data from disk for the `pospopcnt`-functions.
+retrieving data from disk for the `pospopcnt`-functions. In this example, we
+compress data blocks of 512k records (1 MB) using LZ4. 
 
 | Approach        | Time       | Speedup |
 |-----------------|------------|---------|
 | Samtools – BAM  | 30m 50.06s | 1       |
 | Samtools – CRAM | 4m 50.68s  | 6.36    |
-| libflagstats       | 0.72s      | 2569.53 |
+| libflagstats-LZ9       | 0.72s      | 2569.53 |
+| libflagstats-raw       | 0.48s      | 3802.90 |
 
 We also directly compared the potential speed of the naive flagstat subroutine
 in samtools againt these functions if samtools would be rewritten with efficient

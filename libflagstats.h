@@ -111,23 +111,25 @@ void FLAGSTAT_scalar_update(uint16_t val, uint32_t* flags) {
     // the right to distinguish between statistics for data
     // that failed and passed quality control.
     const int offset = ( (val & FLAGSTAT_FQCFAIL) == 0 ) ? 0 : 16;
+    uint32_t* f = &flags[offset];
     // Count only reads that with FLAGSTAT_FQCFAIL set. The other
     // reads are implicitly known and computed at the end of
     // FLAGSTAT_* functions.
-    if (offset) ++flags[offset + FLAGSTAT_FQCFAIL_OFF];
+    if (offset) ++f[FLAGSTAT_FQCFAIL_OFF];
 
-    if (val & FLAGSTAT_FSECONDARY) ++flags[offset + FLAGSTAT_FSECONDARY_OFF];
-    else if (val & FLAGSTAT_FSUPPLEMENTARY) ++flags[offset + FLAGSTAT_FSUPPLEMENTARY_OFF];
+    if (val & FLAGSTAT_FSECONDARY) ++f[FLAGSTAT_FSECONDARY_OFF];
+    else if (val & FLAGSTAT_FSUPPLEMENTARY) ++f[FLAGSTAT_FSUPPLEMENTARY_OFF];
     else if (val & FLAGSTAT_FPAIRED) {
         // ++(s)->n_pair_all[w];              
-        if ( (val & FLAGSTAT_FPROPER_PAIR) && !(val & FLAGSTAT_FUNMAP) ) ++flags[offset + 12];
-        if (val & FLAGSTAT_FREAD1) ++flags[offset + FLAGSTAT_FREAD1_OFF];
-        if (val & FLAGSTAT_FREAD2) ++flags[offset + FLAGSTAT_FREAD2_OFF];
-        if ((val & FLAGSTAT_FMUNMAP) && !(val & FLAGSTAT_FUNMAP))  ++flags[offset + 13];
-        if (!(val & FLAGSTAT_FUNMAP) && !(val & FLAGSTAT_FMUNMAP)) ++flags[offset + 14];
+        if ( (val & FLAGSTAT_FPROPER_PAIR) && !(val & FLAGSTAT_FUNMAP) ) ++f[12];
+        if (val & FLAGSTAT_FREAD1) ++f[FLAGSTAT_FREAD1_OFF];
+        if (val & FLAGSTAT_FREAD2) ++f[FLAGSTAT_FREAD2_OFF];
+        if ((val & FLAGSTAT_FMUNMAP) && !(val & FLAGSTAT_FUNMAP))  ++f[13];
+        if (!(val & FLAGSTAT_FUNMAP) && !(val & FLAGSTAT_FMUNMAP)) ++f[14];
     }
-    if (!(val & FLAGSTAT_FUNMAP)) ++flags[offset + FLAGSTAT_FUNMAP_OFF];
-    if (val & FLAGSTAT_FDUP)      ++flags[offset + FLAGSTAT_FDUP_OFF];
+    // Count as is FUNMAP then use arithmetic to compute N - FUNMAP
+    if (val & FLAGSTAT_FUNMAP) ++f[FLAGSTAT_FUNMAP_OFF];
+    if (val & FLAGSTAT_FDUP)      ++f[FLAGSTAT_FDUP_OFF];
 }
 
 // #define SAMTOOLS_flagstat_loop(s, c) do {                   \

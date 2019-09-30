@@ -1,6 +1,24 @@
 # pyflagstats
 
-python bindings for libflagstats. 
+[![PyPI version](https://badge.fury.io/py/pyflagstats.svg)](https://badge.fury.io/py/pyflagstats)
+
+Given a stream of k-bit words, we seek to sum the bit values at indexes 0, 1, 2,
+..., k-1 across multiple words by computing k distinct sums. If the k-bit words
+are one-hot encoded then the sums corresponds to their frequencies.
+
+This multiple-sum problem is a generalization of the population-count problem
+where we count the total number of set bits in independent machine words. We
+refer to this new problem as the positional population-count problem.
+
+Using SIMD (Single Instruction, Multiple Data) instructions from recent Intel
+processors, we describe algorithms for computing the 16-bit position population
+count using about one eighth (0.125) of a CPU cycle per 16-bit word. Our best
+approach is about 140-fold faster than competitive code using only non-SIMD
+instructions in terms of CPU cycles.
+
+This package contains native Python bindings for the applying the efficient
+positional population count operator to computing summary statistics for the SAM
+FLAG field
 
 ## Intallation
 
@@ -25,7 +43,9 @@ pip3 uninstall pyflagstats
 import numpy as np
 import pyflagstats as fs
 
-fs.flagstats(np.random.randint(0,8192,10000000,dtype="uint16"))
+# Compute summary statistics for 100 million random FLAG fields.
+# Completes in around 1 second.
+fs.flagstats(np.random.randint(0,8192,100000000,dtype="uint16"))
 ```
 
 returns (for example)

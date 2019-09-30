@@ -21,10 +21,18 @@ def flagstats(values):
     cdef uint16_t[::1] v   = values
     cdef ret = FLAGSTATS_u16(&v[0], len(values), &out[0])
 
-    return {
+    SAM_FLAG_NAMES = ["FPAIRED","FPROPER_PAIR","FUNMAP","FMUNMAP","FREVERSE","FMREVERSE", "FREAD1","FREAD2","FSECONDARY","FQCFAIL","FDUP","FSUPPLEMENTARY","n_pair_good","n_sgltn","n_pair_map"]
+
+    ret = {
     "n_values": len(values),
     "passed": 
-        flags[0:16,], 
+        dict(zip(SAM_FLAG_NAMES, flags[0:15,])), 
     "failed": 
-        flags[16:32,]
+        dict(zip(SAM_FLAG_NAMES, flags[16:31,])), 
     }
+
+    ret["passed"]["mapped"] = len(values) - ret["passed"]["FUNMAP"] - ret["failed"]["FUNMAP"]
+    ret["passed"]["paired_in_seq"] = ret["passed"]["FREAD1"] + ret["passed"]["FREAD2"]
+
+    return ret
+

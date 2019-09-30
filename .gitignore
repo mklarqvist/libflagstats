@@ -39,3 +39,4 @@ generate
 python/dist
 python/*-info
 python/MANIFEST
+python/libflagstats.c

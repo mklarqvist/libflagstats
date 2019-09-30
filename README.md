@@ -1,5 +1,7 @@
 # libflagstats
 
+[![PyPI version](https://badge.fury.io/py/pyflagstats.svg)](https://badge.fury.io/py/pyflagstats)
+
 These functions compute the summary statistics for the SAM FLAG field (flagstat)
 using fast SIMD instructions. They are based on the
 [positional-popcount](https://github.com/mklarqvist/positional-popcount)

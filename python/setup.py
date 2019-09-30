@@ -10,23 +10,19 @@ from distutils.extension import Extension
 
 import numpy as np
 
+# Read contents of README markdown file and store
+# in the long_description parameter
+from os import path
+this_directory = path.abspath(path.dirname(__file__))
+with open(path.join(this_directory, 'README.md'), encoding='UTF-8') as f:
+    long_description = f.read()
+
 setup(
     name='pyflagstats',
-    version='0.1.0',
+    version='0.1.3',
     description="Efficient subroutines for computing summary statistics for the SAM FLAG field",
-    long_description="""
-Given a stream of k$bit words, we seek to sum the bit values at indexes 0, 1, 2, ..., k-1 across multiple words 
-by computing k distinct sums. If the k-bit words are one-hot encoded then the sums corresponds to their frequencies.
-
-This multiple-sum problem is a generalization of the population-count 
-problem where we count the total number of set bits in independent machine words.
-We refer to this new problem as the positional population-count problem.
-
-Using SIMD (Single Instruction, Multiple Data) instructions from 
-recent Intel processors, we describe algorithms for computing the 16-bit position population count using about one eighth (0.125) 
-of a CPU cycle per 16-bit word. Our best approach is about 140-fold faster than competitive code using only non-SIMD instructions in terms of CPU cycles.
-
-This package contains the application of the efficient positional population count operator to computing summary statistics for the SAM FLAG field.""",
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     author="Marcus D. R. Klarqvist",
     author_email="mk819@cam.ac.uk",
     platforms="Linux, MacOSX, Windows",
@@ -40,5 +36,11 @@ This package contains the application of the efficient positional population cou
     ),
     install_requires=["numpy", "cython"],
     license="Apache 2.0",
-    keywords = ['simd', 'popcount', 'popcnt', 'pospopcnt', 'hts', 'ngs', 'flags']
+    keywords = ['simd', 'popcount', 'popcnt', 'pospopcnt', 'hts', 'ngs', 'flags'],
+    classifiers=[
+        'Development Status :: 4 - Beta',
+        'Topic :: Scientific/Engineering :: Bio-Informatics',
+        'Intended Audience :: Science/Research',
+        'Programming Language :: Python :: 3',
+    ],
 )

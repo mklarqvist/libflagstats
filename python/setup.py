@@ -8,25 +8,7 @@ from Cython.Distutils import build_ext
 from Cython.Build import cythonize
 from distutils.extension import Extension
 
-import os
 import numpy as np
-
-cmdclass = {'build_ext': build_ext}
-
-class sdist(_sdist):
-    def run(self):
-        # Make sure the compiled Cython files in the distribution are up-to-date
-        from Cython.Build import cythonize
-        cythonize(
-            Extension(
-                "pyflagstats",
-                sources=["libflagstats.pyx"],
-                include_dirs=["../", "../libalgebra", np.get_include()]
-            )
-        )
-        _sdist.run(self)
-
-cmdclass['sdist'] = sdist
 
 setup(
     name='pyflagstats',
@@ -47,12 +29,16 @@ of a CPU cycle per 16-bit word. Our best approach is about 140-fold faster than 
 This package contains the application of the efficient positional population count operator to computing summary statistics for the SAM FLAG field.""",
     author="Marcus D. R. Klarqvist",
     author_email="mk819@cam.ac.uk",
-    platform="Linux, MacOSX, Windows",
+    platforms="Linux, MacOSX, Windows",
     url="https://github.com/mklarqvist/libflagstats",
-    cmdclass=cmdclass,
-    package_data={'': ['../libalgebra/libalgebra.h', '../libflagstats.h']},
-    include_package_data=True,
-    install_requires=["numpy"],
+    ext_modules=cythonize(
+        Extension(
+            "pyflagstats",
+            sources=["libflagstats.pyx"],
+            include_dirs=[np.get_include()]
+        )
+    ),
+    install_requires=["numpy", "cython"],
     license="Apache 2.0",
     keywords = ['simd', 'popcount', 'popcnt', 'pospopcnt', 'hts', 'ngs', 'flags']
 )

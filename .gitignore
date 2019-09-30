@@ -38,3 +38,4 @@ generate
 .vscode
 python/dist
 python/*-info
+python/MANIFEST

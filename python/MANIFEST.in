@@ -1,0 +1,1 @@
+include libflagstats.h libalgebra.h libflagstats.pyx LICENSE README.md

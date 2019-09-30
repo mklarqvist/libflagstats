@@ -127,7 +127,8 @@ void FLAGSTAT_scalar_update(uint16_t val, uint32_t* flags) {
         if ((val & FLAGSTAT_FMUNMAP) && !(val & FLAGSTAT_FUNMAP))  ++f[13];
         if (!(val & FLAGSTAT_FUNMAP) && !(val & FLAGSTAT_FMUNMAP)) ++f[14];
     }
-    if (!(val & FLAGSTAT_FUNMAP)) ++f[FLAGSTAT_FUNMAP_OFF];
+    // Count as is FUNMAP then use arithmetic to compute N - FUNMAP
+    if (val & FLAGSTAT_FUNMAP) ++f[FLAGSTAT_FUNMAP_OFF];
     if (val & FLAGSTAT_FDUP)      ++f[FLAGSTAT_FDUP_OFF];
 }
 

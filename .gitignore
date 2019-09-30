@@ -35,3 +35,6 @@
 bench
 utility
 generate
+.vscode
+python/dist
+python/*-info

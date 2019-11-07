@@ -265,6 +265,8 @@ int lz4_decompress(const std::string& file, int method = 1) {
     uint32_t counters[16*2] = {0}; // flags
     uint64_t tot_flags = 0;
 
+    FLAGSTATS_func func;
+
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
     if (method == 1) {
@@ -283,8 +285,10 @@ int lz4_decompress(const std::string& file, int method = 1) {
             const uint32_t N = uncompresed_size >> 1;
             tot_flags += N;
             // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
+            // FLAGSTAT_avx512((uint16_t*)out_buffer,N,counters);
             // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
+            func = FLAGSTATS_get_function(N);
+            (*func)((uint16_t*)out_buffer,N,counters);
 
             // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
             if (f.tellg() == filesize) break;
@@ -305,9 +309,10 @@ int lz4_decompress(const std::string& file, int method = 1) {
             const uint32_t N = uncompresed_size >> 1;
             tot_flags += N;
             // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            FLAGSTAT_sse4((uint16_t*)out_buffer,N,counters);
+            // FLAGSTAT_avx512((uint16_t*)out_buffer,N,counters);
             // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
-
+            func = FLAGSTATS_get_function(N);
+            (*func)((uint16_t*)out_buffer,N,counters);
             // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
             if (f.tellg() == filesize) break;
         }
@@ -364,6 +369,8 @@ int flagstat_raw(const std::string& file) {
     uint32_t counters[16*2] = {0}; // flags
     uint64_t tot_flags = 0;
 
+    FLAGSTATS_func func;
+
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
     while (f.good()) {
@@ -371,8 +378,10 @@ int flagstat_raw(const std::string& file) {
         size_t read = f.gcount();
         // std::cerr << "Read " << read << std::endl;
 
-        FLAGSTAT_avx2((uint16_t*)out_buffer, read/2, counters);
-        
+        // FLAGSTAT_avx512((uint16_t*)out_buffer, read/2, counters);
+        func = FLAGSTATS_get_function(read >> 1);
+        (*func)((uint16_t*)out_buffer,read >> 1,counters);
+
         if (f.tellg() == filesize) break;
     }
 
@@ -546,6 +555,9 @@ int zstd_decompress(const std::string& file, int method = 1) {
     uint32_t counters[16*2] = {0}; // flags
     uint64_t tot_flags = 0;
 
+
+    FLAGSTATS_func func;
+
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
     if (method == 1) {
@@ -560,7 +572,8 @@ int zstd_decompress(const std::string& file, int method = 1) {
             const uint32_t N = uncompresed_size >> 1;
             tot_flags += N;
             // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
+            func = FLAGSTATS_get_function(N);
+            (*func)((uint16_t*)out_buffer,N,counters);
 
             // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
             if (f.tellg() == filesize) break;
@@ -577,7 +590,8 @@ int zstd_decompress(const std::string& file, int method = 1) {
             const uint32_t N = uncompresed_size >> 1;
             tot_flags += N;
             // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
+            func = FLAGSTATS_get_function(N);
+            (*func)((uint16_t*)out_buffer,N,counters);
 
             // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
             if (f.tellg() == filesize) break;

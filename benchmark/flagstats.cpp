@@ -577,7 +577,7 @@ int zstd_decompress(const std::string& file, int method = 1) {
             const uint32_t N = uncompresed_size >> 1;
             tot_flags += N;
             // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            FLAGSTAT_sse4((uint16_t*)out_buffer,N,counters);
+            FLAGSTAT_avx2((uint16_t*)out_buffer,N,counters);
 
             // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
             if (f.tellg() == filesize) break;

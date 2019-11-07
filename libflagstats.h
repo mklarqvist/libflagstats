@@ -686,13 +686,15 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
 
 STORM_TARGET("avx512bw")
 static
-int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
+int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
     for (uint32_t i = len - (len % (32 * 16)); i < len; ++i) {
-        FLAGSTAT_scalar_update(array[i], out);
+        FLAGSTAT_scalar_update(array[i], flags);
     }
 
     const __m512i* data = (const __m512i*)array;
-    size_t size = len / 32;
+    size_t size = len / 16;
     __m512i v1  = _mm512_setzero_si512();
     __m512i v2  = _mm512_setzero_si512();
     __m512i v4  = _mm512_setzero_si512();
@@ -710,15 +712,47 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
     const uint64_t limit = size - size % 16;
     uint64_t i = 0;
     uint16_t buffer[32];
-    __m512i counter[16]; __m512i counterU[16];
-    const __m512i one  = _mm512_set1_epi16(1); // (11...1) vector
+    __m512i counter[16]; 
+    __m512i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m512i m1   = _mm512_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m512i m1S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m2   = _mm512_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m512i m2S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m3   = _mm512_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m512i m4   = _mm512_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m512i one  = _mm512_set1_epi16(1); // (00...1) vector
     const __m512i zero = _mm512_set1_epi16(0); // (00...0) vector
 
-    // Mask selectors.
-    const __m512i mask1 = _mm512_set1_epi16(256 + 2048); // FLAGSTAT_FSECONDARY (256) + FLAGSTAT_FSUPPLEMENTARY (2048)
-    const __m512i mask2 = _mm512_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep FLAGSTAT_FUNMAP (4) + FLAGSTAT_FDUP (1024) 
-        // for Always rule and FLAGSTAT_FSECONDARY (256) and FLAGSTAT_FSUPPLEMENTARY (2048) for Rule 1 and Rule 2.
-    const __m512i mask3 = _mm512_set1_epi16(512); // FLAGSTAT_FQCFAIL (512)
+    // const __m512i* data = (const __m512i*)array;
+    // size_t size = len / 32;
+    // __m512i v1  = _mm512_setzero_si512();
+    // __m512i v2  = _mm512_setzero_si512();
+    // __m512i v4  = _mm512_setzero_si512();
+    // __m512i v8  = _mm512_setzero_si512();
+    // __m512i v16 = _mm512_setzero_si512();
+    // __m512i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    // __m512i v1U  = _mm512_setzero_si512();
+    // __m512i v2U  = _mm512_setzero_si512();
+    // __m512i v4U  = _mm512_setzero_si512();
+    // __m512i v8U  = _mm512_setzero_si512();
+    // __m512i v16U = _mm512_setzero_si512();
+    // __m512i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
+
+    // const uint64_t limit = size - size % 16;
+    // uint64_t i = 0;
+    // uint16_t buffer[32];
+    // __m512i counter[16]; __m512i counterU[16];
+    // const __m512i one  = _mm512_set1_epi16(1); // (11...1) vector
+    // const __m512i zero = _mm512_set1_epi16(0); // (00...0) vector
+
+    // // Mask selectors.
+    // const __m512i mask1 = _mm512_set1_epi16(256 + 2048); // FLAGSTAT_FSECONDARY (256) + FLAGSTAT_FSUPPLEMENTARY (2048)
+    // const __m512i mask2 = _mm512_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep FLAGSTAT_FUNMAP (4) + FLAGSTAT_FDUP (1024) 
+    //     // for Always rule and FLAGSTAT_FSECONDARY (256) and FLAGSTAT_FSUPPLEMENTARY (2048) for Rule 1 and Rule 2.
+    // const __m512i mask3 = _mm512_set1_epi16(512); // FLAGSTAT_FQCFAIL (512)
 
     while (i < limit) {
         for (size_t i = 0; i < 16; ++i) {
@@ -777,11 +811,16 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
         // the LU registers, with the difference that mask-selection is based on
         // the one vector (00...1).
 
-#define LOAD(j) __m512i data##j = _mm512_loadu_si512(data + i + j) & (_mm512_cmpeq_epi16_mask( _mm512_loadu_si512(data + i + j) & mask1, zero ) | mask2);
-#define L(j)  data##j & _mm512_cmpeq_epi16_mask( data##j & mask3, zero )
-#define LU(j) data##j & _mm512_cmpeq_epi16_mask( data##j & mask3, mask3 )
-
-
+#define W(j) __m512i data##j = _mm512_loadu_si512(data + i + j);
+#define O1(j) data##j = data##j | _mm512_slli_epi16(data##j & _mm512_cmpeq_epi16_mask((data##j & _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP)), _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR)) & one, 12); 
+#define O2(j) data##j = data##j | _mm512_slli_epi16(data##j & _mm512_cmpeq_epi16_mask((data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), _mm512_set1_epi16(FLAGSTAT_FMUNMAP)) & one, 13); 
+#define O3(j) data##j = data##j | _mm512_slli_epi16(data##j & _mm512_cmpeq_epi16_mask((data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), zero) & one, 14); 
+#define L1(j) data##j = data##j & (_mm512_cmpeq_epi16_mask((data##j & m1), zero) | m1S);
+#define L2(j) data##j = data##j & (_mm512_cmpeq_epi16_mask((data##j & m2), zero) | m2S);
+#define L3(j) data##j = data##j & (_mm512_cmpeq_epi16_mask((data##j & m3), m3)   | m2S);
+#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define L(j)  data##j & _mm512_cmpeq_epi16_mask( data##j & m4, zero )
+#define LU(j) data##j & _mm512_cmpeq_epi16_mask( data##j & m4, m4 )
 
         for (/**/; i < thislimit; i += 16) {
 #define U(pos) {                     \
@@ -837,6 +876,13 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
 #undef LOAD
 #undef L
 #undef LU
+#undef W
+#undef O1
+#undef O2
+#undef O3
+#undef L1
+#undef L2
+#undef L3
         }
         
         // Update the counters after the last iteration
@@ -850,12 +896,12 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
         for (size_t i = 0; i < 32; ++i) {
             _mm512_storeu_si512((__m512i*)buffer, counter[i]);
             for (size_t z = 0; z < 16; z++) {
-                out[i] += 16 * (uint32_t)buffer[z];
+                flags[i] += 16 * (uint32_t)buffer[z];
             }
 
             _mm512_storeu_si512((__m512i*)buffer, counterU[i]);
             for (size_t z = 0; z < 16; z++) {
-                out[16+i] += 16 * (uint32_t)buffer[z];
+                flags[16+i] += 16 * (uint32_t)buffer[z];
             }
         }
     }
@@ -863,52 +909,52 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
     _mm512_storeu_si512((__m512i*)buffer, v1);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += ((buffer[i] & (1 << j)) >> j);
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v1U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
         }
     }
 
     _mm512_storeu_si512((__m512i*)buffer, v2);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v2U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
         }
     }
 
     _mm512_storeu_si512((__m512i*)buffer, v4);
     for (size_t i = 0; i < 16; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v4U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
         }
     }
 
     _mm512_storeu_si512((__m512i*)buffer, v8);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v8U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
         }
     }
 

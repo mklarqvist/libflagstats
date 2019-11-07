@@ -163,6 +163,7 @@ int FLAGSTAT_scalar(const uint16_t* array, uint32_t len, uint32_t* flags) {
     for (uint32_t i = 0; i < len; ++i) {
         FLAGSTAT_scalar_update(array[i], flags);
     }
+    return 0;
 }
 
 #if defined(STORM_HAVE_SSE42)
@@ -957,6 +958,9 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* flags) {
             flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
         }
     }
+
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
 
     return 0;
 }

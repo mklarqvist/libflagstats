@@ -23,7 +23,7 @@ CPP_SOURCE = benchmark/flagstats.cpp benchmark/utility.cpp benchmark/generate.cp
 C_SOURCE   = 
 OBJECTS    = $(CPP_SOURCE:.cpp=.o) $(C_SOURCE:.c=.o)
 
-POSPOPCNT_PATH  := ../libalgebra
+POSPOPCNT_PATH  := ./libalgebra
 LZ4_PATH :=
 ZSTD_PATH :=
 INCLUDE_PATHS := -I$(PWD)

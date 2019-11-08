@@ -163,6 +163,7 @@ int FLAGSTAT_scalar(const uint16_t* array, uint32_t len, uint32_t* flags) {
     for (uint32_t i = 0; i < len; ++i) {
         FLAGSTAT_scalar_update(array[i], flags);
     }
+    return 0;
 }
 
 #if defined(STORM_HAVE_SSE42)
@@ -686,9 +687,11 @@ int FLAGSTAT_avx2(const uint16_t* array, uint32_t len, uint32_t* flags) {
 
 STORM_TARGET("avx512bw")
 static
-int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
+int FLAGSTAT_avx512(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
     for (uint32_t i = len - (len % (32 * 16)); i < len; ++i) {
-        FLAGSTAT_scalar_update(array[i], out);
+        FLAGSTAT_scalar_update(array[i], flags);
     }
 
     const __m512i* data = (const __m512i*)array;
@@ -710,15 +713,18 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
     const uint64_t limit = size - size % 16;
     uint64_t i = 0;
     uint16_t buffer[32];
-    __m512i counter[16]; __m512i counterU[16];
-    const __m512i one  = _mm512_set1_epi16(1); // (11...1) vector
+    __m512i counter[16]; 
+    __m512i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m512i m1   = _mm512_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m512i m1S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m2   = _mm512_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m512i m2S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m3   = _mm512_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m512i m4   = _mm512_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m512i one  = _mm512_set1_epi16(1); // (00...1) vector
     const __m512i zero = _mm512_set1_epi16(0); // (00...0) vector
-
-    // Mask selectors.
-    const __m512i mask1 = _mm512_set1_epi16(256 + 2048); // FLAGSTAT_FSECONDARY (256) + FLAGSTAT_FSUPPLEMENTARY (2048)
-    const __m512i mask2 = _mm512_set1_epi16(4 + 256 + 1024 + 2048); // Need to keep FLAGSTAT_FUNMAP (4) + FLAGSTAT_FDUP (1024) 
-        // for Always rule and FLAGSTAT_FSECONDARY (256) and FLAGSTAT_FSUPPLEMENTARY (2048) for Rule 1 and Rule 2.
-    const __m512i mask3 = _mm512_set1_epi16(512); // FLAGSTAT_FQCFAIL (512)
 
     while (i < limit) {
         for (size_t i = 0; i < 16; ++i) {
@@ -730,58 +736,16 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
         if (thislimit - i >= (1 << 16))
             thislimit = i + (1 << 16) - 1;
 
-        ///////////////////////////////////////////////////////////////////////
-        // We load a register of data (data + i + j) and then construct the
-        // conditional bits: 
-        // 12: FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP == FLAGSTAT_FPROPER_PAIR
-        // 13: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == FLAGSTAT_FMUNMAP
-        // 14: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == 0
-        //
-        // These construction of these bits can be described for data x as:
-        // x |= (x & LEFT_MASK == RIGHT_MASK) & 1 << TARGET_BIT
-        // with the assumption that predicate evaluatons result in the selection
-        // masks (00...0) or (11...1) for FALSE and TRUE, respectively. These
-        // construction macros are named O1, O2, and O3.
-        //
-        // The original SAMtools method is also heavily branched with three
-        // main branch points:
-        // If FLAGSTAT_FSECONDARY then count FLAGSTAT_FSECONDARY
-        // If FLAGSTAT_FSUPPLEMENTARY then count FLAGSTAT_FSUPPLEMENTARY
-        // Else then count FLAGSTAT_FREAD1, 
-        //                 FLAGSTAT_FREAD2,
-        //                 Special bit 12, 13, and 14
-        // Always count FLAGSTAT_FUNMAP, 
-        //              FLAGSTAT_FDUP, 
-        //              FLAGSTAT_FQCFAIL
-        //
-        // These bits can be selected using a mask-select propagate-carry approach:
-        // x &= x & ((x == MASK) | CARRY_BITS)
-        // with the arguments for MASK and CARRY_BITS as follows:
-        //    1. {FLAGSTAT_FSECONDARY, 
-        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
-        //    2. {FLAGSTAT_FSUPPLEMENTARY, 
-        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
-        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
-        //    3. {FLAGSTAT_FPAIRED, 
-        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
-        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
-        //
-        // FLAGSTATS outputs summary statistics separately for reads that pass
-        // QC and those that do not. Therefore we need to partition the data
-        // into these two classes. For data that pass QC, the L registers, we
-        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask
-        // mask3. The resulting data is used to perform another mask-select
-        // using VPCMPEQW against the empty vector (00...0). As above, if the
-        // data has the FLAGSTAT_FQCFAIL bit set then this register will be
-        // zeroed out. The exact process is performed for reads that fail QC,
-        // the LU registers, with the difference that mask-selection is based on
-        // the one vector (00...1).
-
-#define LOAD(j) __m512i data##j = _mm512_loadu_si512(data + i + j) & (_mm512_cmpeq_epi16_mask( _mm512_loadu_si512(data + i + j) & mask1, zero ) | mask2);
-#define L(j)  data##j & _mm512_cmpeq_epi16_mask( data##j & mask3, zero )
-#define LU(j) data##j & _mm512_cmpeq_epi16_mask( data##j & mask3, mask3 )
-
-
+#define W(j) __m512i data##j = _mm512_loadu_si512(data + i + j);
+#define O1(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR)), (uint16_t)1 << 12); 
+#define O2(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FMUNMAP)), (uint16_t)1 << 13);
+#define O3(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), zero), (uint16_t)1 << 14);
+#define L1(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m1), zero),65535) | m1S);
+#define L2(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m2), zero),65535) | m2S);
+#define L3(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m3), m3),  65535) | m2S);
+#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define L(j)  data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, zero ), 65535)
+#define LU(j) data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, m4 ),   65535)
 
         for (/**/; i < thislimit; i += 16) {
 #define U(pos) {                     \
@@ -837,25 +801,32 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
 #undef LOAD
 #undef L
 #undef LU
+#undef W
+#undef O1
+#undef O2
+#undef O3
+#undef L1
+#undef L2
+#undef L3
         }
-        
+
         // Update the counters after the last iteration
-        for (size_t i = 0; i < 32; ++i) {
+        for (size_t i = 0; i < 16; ++i) {
             counter[i]  = _mm512_add_epi16(counter[i], _mm512_and_si512(v16, one));
             v16  = _mm512_srli_epi16(v16, 1);
             counterU[i] = _mm512_add_epi16(counterU[i], _mm512_and_si512(v16U, one));
             v16U = _mm512_srli_epi16(v16U, 1);
         }
         
-        for (size_t i = 0; i < 32; ++i) {
+        for (size_t i = 0; i < 16; ++i) {
             _mm512_storeu_si512((__m512i*)buffer, counter[i]);
-            for (size_t z = 0; z < 16; z++) {
-                out[i] += 16 * (uint32_t)buffer[z];
+            for (size_t z = 0; z < 32; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
             }
 
             _mm512_storeu_si512((__m512i*)buffer, counterU[i]);
-            for (size_t z = 0; z < 16; z++) {
-                out[16+i] += 16 * (uint32_t)buffer[z];
+            for (size_t z = 0; z < 32; z++) {
+                flags[16+i] += 16 * (uint32_t)buffer[z];
             }
         }
     }
@@ -863,58 +834,118 @@ int FLAGSTAT_avx512(const uint16_t* array, size_t len, uint32_t* out) {
     _mm512_storeu_si512((__m512i*)buffer, v1);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += ((buffer[i] & (1 << j)) >> j);
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v1U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
         }
     }
 
     _mm512_storeu_si512((__m512i*)buffer, v2);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v2U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
         }
     }
 
     _mm512_storeu_si512((__m512i*)buffer, v4);
-    for (size_t i = 0; i < 16; ++i) {
+    for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v4U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
         }
     }
 
     _mm512_storeu_si512((__m512i*)buffer, v8);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
         }
     }
     _mm512_storeu_si512((__m512i*)buffer, v8U);
     for (size_t i = 0; i < 32; ++i) {
         for (int j = 0; j < 16; ++j) {
-            out[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
         }
     }
+
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
 
     return 0;
 }
 #endif // end AVX512
+
+/* *************************************
+*  Function pointer definitions.
+***************************************/
+typedef int (*FLAGSTATS_func)(const uint16_t*, uint32_t, uint32_t*);
+
+/* *************************************
+*  Wrapper functions
+***************************************/
+
+static
+FLAGSTATS_func FLAGSTATS_get_function(uint32_t n_len)
+{
+
+#if defined(STORM_HAVE_CPUID)
+    #if defined(__cplusplus)
+    /* C++11 thread-safe singleton */
+    static const int cpuid = STORM_get_cpuid();
+    #else
+    static int cpuid_ = -1;
+    int cpuid = cpuid_;
+    if (cpuid == -1) {
+        cpuid = STORM_get_cpuid();
+
+        #if defined(_MSC_VER)
+        _InterlockedCompareExchange(&cpuid_, cpuid, -1);
+        #else
+        __sync_val_compare_and_swap(&cpuid_, -1, cpuid);
+        #endif
+    }
+    #endif
+#endif
+
+#if defined(STORM_HAVE_AVX512)
+    if ((cpuid & STORM_CPUID_runtime_bit_AVX512BW) && n_len >= 1024) { // 16*512
+        return &FLAGSTAT_avx512;
+    }
+#endif
+
+#if defined(STORM_HAVE_AVX2)
+    if ((cpuid & STORM_CPUID_runtime_bit_AVX2) && n_len >= 512) { // 16*256
+        return &FLAGSTAT_avx2;
+    }
+    
+    if ((cpuid & STORM_CPUID_runtime_bit_SSE42) && n_len >= 256) { // 16*128
+        return &FLAGSTAT_sse4;
+    }
+#endif
+
+#if defined(STORM_HAVE_SSE42)
+    if ((cpuid & STORM_CPUID_runtime_bit_SSE42) && n_len >= 256) { // 16*128
+        return &FLAGSTAT_sse4;
+    }
+#endif
+
+    return &FLAGSTAT_scalar;
+}
 
 static
 uint64_t FLAGSTATS_u16(const uint16_t* array, uint32_t n_len, uint32_t* flags)

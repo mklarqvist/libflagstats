@@ -19,7 +19,7 @@ with open(path.join(this_directory, 'README.md'), encoding='UTF-8') as f:
 
 setup(
     name='pyflagstats',
-    version='0.1.3',
+    version='0.1.4',
     description="Efficient subroutines for computing summary statistics for the SAM FLAG field",
     long_description=long_description,
     long_description_content_type='text/markdown',

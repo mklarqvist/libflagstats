@@ -737,15 +737,15 @@ int FLAGSTAT_avx512(const uint16_t* array, uint32_t len, uint32_t* flags) {
             thislimit = i + (1 << 16) - 1;
 
 #define W(j) __m512i data##j = _mm512_loadu_si512(data + i + j);
-#define O1(j) data##j = data##j | _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR)), (uint16_t)1 << 12); 
-#define O2(j) data##j = data##j | _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FMUNMAP)), (uint16_t)1 << 13);
-#define O3(j) data##j = data##j | _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), zero), (uint16_t)1 << 14);
+#define O1(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR)), (uint16_t)1 << 12); 
+#define O2(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FMUNMAP)), (uint16_t)1 << 13);
+#define O3(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), zero), (uint16_t)1 << 14);
 #define L1(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m1), zero),65535) | m1S);
 #define L2(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m2), zero),65535) | m2S);
-#define L3(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m3), m3),65535)   | m2S);
+#define L3(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m3), m3),  65535) | m2S);
 #define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
 #define L(j)  data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, zero ), 65535)
-#define LU(j) data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, m4 ), 65535)
+#define LU(j) data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, m4 ),   65535)
 
         for (/**/; i < thislimit; i += 16) {
 #define U(pos) {                     \

@@ -1,7 +1,7 @@
 # libflagstats
 
 [![PyPI version](https://badge.fury.io/py/pyflagstats.svg)](https://badge.fury.io/py/pyflagstats)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mklarqvist/libflagstats/blob/avx512/python/pyflagstats.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mklarqvist/libflagstats/blob/master/python/pyflagstats.ipynb)
 
 
 These functions compute the summary statistics for the SAM FLAG field (flagstat)

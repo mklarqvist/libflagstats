@@ -285,7 +285,7 @@ int lz4_decompress_only(const std::string& file) {
     return 1;
 }
 
-int lz4_decompress(const std::string& file, int method = 1) {
+int lz4_decompress(const std::string& file) {
     std::ifstream f(file, std::ios::in | std::ios::binary | std::ios::ate);
     if (f.good() == false) return 0;
     int64_t filesize = f.tellg();
@@ -308,53 +308,27 @@ int lz4_decompress(const std::string& file, int method = 1) {
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
-    if (method == 1) {
         while (f.good()) {
-            f.read((char*)&uncompresed_size, sizeof(int32_t));
-            f.read((char*)&compressed_size, sizeof(int32_t));
-            f.read((char*)buffer, compressed_size);
+        f.read((char*)&uncompresed_size, sizeof(int32_t));
+        f.read((char*)&compressed_size, sizeof(int32_t));
+        f.read((char*)buffer, compressed_size);
 
-            const int32_t decompressed_size = LZ4_decompress_safe((char*)buffer, (char*)out_buffer, compressed_size, uncompresed_size);
-            // Check return_value to determine what happened.
-            if (decompressed_size < 0)
-                run_screaming("A negative result from LZ4_decompress_safe indicates a failure trying to decompress the data.  See exit code (echo $?) for value returned.", decompressed_size);
-            if (decompressed_size == 0)
-                run_screaming("I'm not sure this function can ever return 0.  Documentation in lz4.h doesn't indicate so.", 1);
+        const int32_t decompressed_size = LZ4_decompress_safe((char*)buffer, (char*)out_buffer, compressed_size, uncompresed_size);
+        // Check return_value to determine what happened.
+        if (decompressed_size < 0)
+            run_screaming("A negative result from LZ4_decompress_safe indicates a failure trying to decompress the data.  See exit code (echo $?) for value returned.", decompressed_size);
+        if (decompressed_size == 0)
+            run_screaming("I'm not sure this function can ever return 0.  Documentation in lz4.h doesn't indicate so.", 1);
 
-            const uint32_t N = uncompresed_size >> 1;
-            tot_flags += N;
-            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            // FLAGSTAT_avx512((uint16_t*)out_buffer,N,counters);
-            // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
-            func = FLAGSTATS_get_function(N);
-            (*func)((uint16_t*)out_buffer,N,counters);
-
-            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
-            if (f.tellg() == filesize) break;
-        }
-    } else {
-         while (f.good()) {
-            f.read((char*)&uncompresed_size, sizeof(int32_t));
-            f.read((char*)&compressed_size, sizeof(int32_t));
-            f.read((char*)buffer, compressed_size);
-
-            const int32_t decompressed_size = LZ4_decompress_safe((char*)buffer, (char*)out_buffer, compressed_size, uncompresed_size);
-            // Check return_value to determine what happened.
-            if (decompressed_size < 0)
-                run_screaming("A negative result from LZ4_decompress_safe indicates a failure trying to decompress the data.  See exit code (echo $?) for value returned.", decompressed_size);
-            if (decompressed_size == 0)
-                run_screaming("I'm not sure this function can ever return 0.  Documentation in lz4.h doesn't indicate so.", 1);
-
-            const uint32_t N = uncompresed_size >> 1;
-            tot_flags += N;
-            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            // FLAGSTAT_avx512((uint16_t*)out_buffer,N,counters);
-            // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
-            func = FLAGSTATS_get_function(N);
-            (*func)((uint16_t*)out_buffer,N,counters);
-            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
-            if (f.tellg() == filesize) break;
-        }
+        const uint32_t N = uncompresed_size >> 1;
+        tot_flags += N;
+        // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+        // FLAGSTAT_avx512((uint16_t*)out_buffer,N,counters);
+        // STORM_pospopcnt_u16_avx2_harvey_seal((uint16_t*)out_buffer,N,counters);
+        func = FLAGSTATS_get_function(N);
+        (*func)((uint16_t*)out_buffer,N,counters);
+        // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+        if (f.tellg() == filesize) break;
     }
 
     std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
@@ -408,7 +382,7 @@ int flagstat_raw_read(const std::string& file) {
     uint32_t counters[16*2] = {0}; // flags
     uint64_t tot_flags = 0;
 
-    FLAGSTATS_func func;
+    // FLAGSTATS_func func;
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
@@ -659,7 +633,7 @@ int zstd_decompress_only(const std::string& file) {
     return 1;
 }
 
-int zstd_decompress(const std::string& file, int method = 1) {
+int zstd_decompress(const std::string& file) {
     std::ifstream f(file, std::ios::in | std::ios::binary | std::ios::ate);
     if (f.good() == false) return 0;
     int64_t filesize = f.tellg();
@@ -677,42 +651,22 @@ int zstd_decompress(const std::string& file, int method = 1) {
 
     std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
-    if (method == 1) {
-        while (f.good()) {
-            f.read((char*)&uncompresed_size, sizeof(int32_t));
-            f.read((char*)&compressed_size, sizeof(int32_t));
-            f.read((char*)buffer, compressed_size);
+    while (f.good()) {
+        f.read((char*)&uncompresed_size, sizeof(int32_t));
+        f.read((char*)&compressed_size, sizeof(int32_t));
+        f.read((char*)buffer, compressed_size);
 
-            const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
-            // assert(decompressed_size == uncompresed_size);
+        const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
+        // assert(decompressed_size == uncompresed_size);
 
-            const uint32_t N = uncompresed_size >> 1;
-            tot_flags += N;
-            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            func = FLAGSTATS_get_function(N);
-            (*func)((uint16_t*)out_buffer,N,counters);
+        const uint32_t N = uncompresed_size >> 1;
+        tot_flags += N;
+        // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
+        func = FLAGSTATS_get_function(N);
+        (*func)((uint16_t*)out_buffer,N,counters);
 
-            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
-            if (f.tellg() == filesize) break;
-        }
-    } else {
-        while (f.good()) {
-            f.read((char*)&uncompresed_size, sizeof(int32_t));
-            f.read((char*)&compressed_size, sizeof(int32_t));
-            f.read((char*)buffer, compressed_size);
-
-            const int32_t decompressed_size = ZstdDecompress(buffer, 1024000, out_buffer, uncompresed_size);
-            // assert(decompressed_size == uncompresed_size);
-
-            const uint32_t N = uncompresed_size >> 1;
-            tot_flags += N;
-            // pospopcnt_u16((uint16_t*)out_buffer,N,counters);
-            func = FLAGSTATS_get_function(N);
-            (*func)((uint16_t*)out_buffer,N,counters);
-
-            // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
-            if (f.tellg() == filesize) break;
-        }
+        // std::cerr << "Decompressed " << compressed_size << "->" << uncompresed_size << std::endl;
+        if (f.tellg() == filesize) break;
     }
 
     std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
@@ -894,14 +848,24 @@ int decompress(int argc, char** argv) {
 	int option_index = 0;
 	static struct option long_options[] = {
 		{"input",       required_argument, 0,  'i' },
+
+        {"raw-read",       optional_argument, 0,  'R' },
+        {"raw-flagstats",       optional_argument, 0,  'D' },
+        {"raw-samtools",       optional_argument, 0,  'S' },
+
+        {"read",       optional_argument, 0,  'r' },
+        {"flagstats",       optional_argument, 0,  'd' },
+        {"samtools",       optional_argument, 0,  's' },
+
 		{0,0,0,0}
 	};
 	
     std::string input;
     bool lz4 = false;
     bool mzstd = false;
+    int step = 0;
 
-	while ((c = getopt_long(argc, argv, "i:?", long_options, &option_index)) != -1){
+	while ((c = getopt_long(argc, argv, "i:RDSrds?", long_options, &option_index)) != -1){
 		switch (c){
 		case 0:
 			std::cerr << "Case 0: " << option_index << '\t' << long_options[option_index].name << std::endl;
@@ -909,6 +873,12 @@ int decompress(int argc, char** argv) {
 		case 'i':
 			input = std::string(optarg);
 			break;
+        case 'R': step = 0; break;
+        case 'D': step = 1; break;
+        case 'S': step = 2; break;
+        case 'r': step = 3; break;
+        case 'd': step = 4; break;
+        case 's': step = 5; break;
 		default:
 			std::cerr << "Unrecognized option: " << (char)c << std::endl;
 			return(EXIT_FAILURE);
@@ -928,58 +898,26 @@ int decompress(int argc, char** argv) {
     }
 
     if (method == 1) {
-        std::cerr << "method1" << std::endl;
-        clear_cache();
-        zstd_decompress_only(input); // warmup
-        clear_cache();
-        zstd_decompress_only(input);
-        clear_cache();
-        flagstat_raw_read(input);
-        clear_cache();
-        flagstat_raw_read(input);
-        clear_cache();
-        flagstat_raw(input);
-        clear_cache();
-        flagstat_raw(input);
-        clear_cache();
-        flagstat_raw_samtools(input);
-        clear_cache();
-        flagstat_raw_samtools(input);
-        clear_cache();
-        zstd_decompress_samtools(input);
-        clear_cache();
-        zstd_decompress_samtools(input);
-        clear_cache();
-        zstd_decompress(input, 1);
-        clear_cache();
-        zstd_decompress(input, 2);
+        // std::cerr << "method1" << std::endl;
+        switch(step) {
+        case 0: flagstat_raw_read(input); break; // -R
+        case 1: flagstat_raw(input); break;// -D
+        case 2: flagstat_raw_samtools(input); break;// -S
+        case 3: zstd_decompress_only(input); break;// warmup, -r
+        case 4: zstd_decompress(input); break;// -d
+        case 5: zstd_decompress_samtools(input); break;// -s
+        }
     }
     
     if (method == 2) {
-        clear_cache();
-        lz4_decompress_only(input); // warmup
-        clear_cache();
-        lz4_decompress_only(input);
-        clear_cache();
-        flagstat_raw_read(input);
-        clear_cache();
-        flagstat_raw_read(input);
-        clear_cache();
-        flagstat_raw(input);
-        clear_cache();
-        flagstat_raw(input);
-        clear_cache();
-        flagstat_raw_samtools(input);
-        clear_cache();
-        flagstat_raw_samtools(input);
-        clear_cache();
-        lz4_decompress_samtools(input);
-        clear_cache();
-        lz4_decompress_samtools(input);
-        clear_cache();
-        lz4_decompress(input, 1);
-        clear_cache();
-        lz4_decompress(input, 2);
+        switch(step) {
+        case 0: lz4_decompress_only(input); break; // warmup
+        case 1: flagstat_raw_read(input); break;
+        case 2: flagstat_raw(input); break;
+        case 3: flagstat_raw_samtools(input); break;
+        case 4: lz4_decompress(input); break;
+        case 5: lz4_decompress_samtools(input); break;
+        }
     }
 
     return EXIT_SUCCESS;

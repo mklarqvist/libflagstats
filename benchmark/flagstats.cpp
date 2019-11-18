@@ -911,10 +911,10 @@ int decompress(int argc, char** argv) {
     
     if (method == 2) {
         switch(step) {
-        case 0: lz4_decompress_only(input); break; // warmup
-        case 1: flagstat_raw_read(input); break;
-        case 2: flagstat_raw(input); break;
-        case 3: flagstat_raw_samtools(input); break;
+        case 0: flagstat_raw_read(input); break;
+        case 1: flagstat_raw(input); break;
+        case 2: flagstat_raw_samtools(input); break;
+        case 3: lz4_decompress_only(input); break; // warmup
         case 4: lz4_decompress(input); break;
         case 5: lz4_decompress_samtools(input); break;
         }

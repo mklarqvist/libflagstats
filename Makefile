@@ -19,7 +19,7 @@
 OPTFLAGS  := -O3 -march=native
 CFLAGS     = -std=c99 $(OPTFLAGS) $(DEBUG_FLAGS)
 CPPFLAGS   = -std=c++0x $(OPTFLAGS) $(DEBUG_FLAGS)
-CPP_SOURCE = benchmark/flagstats.cpp benchmark/utility.cpp benchmark/generate.cpp
+CPP_SOURCE = benchmark/flagstats.cpp benchmark/utility.cpp benchmark/generate.cpp linux/instrumented_benchmark.cpp
 C_SOURCE   = 
 OBJECTS    = $(CPP_SOURCE:.cpp=.o) $(C_SOURCE:.c=.o)
 
@@ -57,8 +57,14 @@ bench.o: benchmark/flagstats.cpp
 benchmark: bench.o
 	$(CXX) $(CPPFLAGS) bench.o -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) $(LIBRARY_PATHS) -o bench -llz4 -lzstd
 
+instrumented_benchmark : linux/instrumented_benchmark.cpp
+	$(CXX) $(CPPFLAGS) -I. -I$(POSPOPCNT_PATH) -I./linux -o $@ $<
+
+instrumented_benchmark_align64 : linux/instrumented_benchmark.cpp
+	$(CXX) $(CPPFLAGS) -DALIGN -I. -I$(POSPOPCNT_PATH) -I./linux -c -o $@ $<
+
 clean:
 	rm -f $(OBJECTS)
-	rm -f bench bench.o utility generate
+	rm -f bench bench.o utility generate instrumented_benchmark instrumented_benchmark_align64
 
 .PHONY: all clean

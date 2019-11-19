@@ -28,6 +28,47 @@
 
 // FLAGSTATS_func methods[] = {FLAGSTAT_sse4, FLAGSTAT_avx2, FLAGSTAT_avx512};
 
+typedef struct {
+    long long n_reads[2], n_mapped[2], n_pair_all[2], n_pair_map[2], n_pair_good[2];
+    long long n_sgltn[2], n_read1[2], n_read2[2];
+    long long n_dup[2];
+    long long n_diffchr[2], n_diffhigh[2];
+    long long n_secondary[2], n_supp[2];
+} bam_flagstat_t;
+
+#define SAMTOOLS_flagstat_loop(s, c) do {                   \
+    int w = (c & FLAGSTAT_FQCFAIL)? 1 : 0;                  \
+    ++(s)->n_reads[w];                                      \
+    if (c & FLAGSTAT_FSECONDARY ) {                         \
+        ++(s)->n_secondary[w];                              \
+    } else if (c & FLAGSTAT_FSUPPLEMENTARY ) {              \
+        ++(s)->n_supp[w];                                   \
+    } else if (c & FLAGSTAT_FPAIRED) {                      \
+        ++(s)->n_pair_all[w];                               \
+        if ( (c & FLAGSTAT_FPROPER_PAIR) && !(c & FLAGSTAT_FUNMAP) ) ++(s)->n_pair_good[w]; \
+        if (c & FLAGSTAT_FREAD1) ++(s)->n_read1[w];         \
+        if (c & FLAGSTAT_FREAD2) ++(s)->n_read2[w];         \
+        if ((c & FLAGSTAT_FMUNMAP) && !(c & FLAGSTAT_FUNMAP)) ++(s)->n_sgltn[w]; \
+        if (!(c & FLAGSTAT_FUNMAP) && !(c & FLAGSTAT_FMUNMAP)) {      \
+            ++(s)->n_pair_map[w];                           \
+        }                                                   \
+    }                                                       \
+    if (!(c & FLAGSTAT_FUNMAP)) ++(s)->n_mapped[w];         \
+    if (c & FLAGSTAT_FDUP) ++(s)->n_dup[w];                 \
+} while (0)
+
+int samtools_flagstats(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    bam_flagstat_t* s = (bam_flagstat_t*)calloc(1, sizeof(bam_flagstat_t));
+    for (int i = 0; i < len; ++i) {
+        SAMTOOLS_flagstat_loop(s, array[i]);
+    }
+    flags[0] = s->n_read1[0]; // prevent optimzie away
+    flags[1] += flags[0];
+    free(s);
+    return 0;
+}
+
+
 void print16(uint32_t *flags) {
     for (int k = 0; k < 16; k++)
         printf(" %8u ", flags[k]);
@@ -164,7 +205,7 @@ bool benchmark(uint32_t n, uint32_t iterations, FLAGSTATS_func fn, bool verbose,
  * @brief 
  * 
  * @param n          Number of integers.
- * @parem m          Number of arrays.
+ * @param m          Number of arrays.
  * @param iterations Number of iterations.
  * @param fn         Target function pointer.
  * @param verbose    Flag enabling verbose output.
@@ -368,6 +409,24 @@ int main(int argc, char **argv) {
     }
     #endif
 #endif
+
+    printf("libflagstats-scalar\t");
+    fflush(NULL);
+    bool isok = benchmarkMany(n, m, iterations, FLAGSTAT_scalar, verbose, true);
+    if (isok == false) {
+        printf("Problem detected with %u.\n", 0);
+    }
+    if (verbose)
+        printf("\n");
+
+    printf("samtools\t");
+    fflush(NULL);
+    isok = benchmarkMany(n, m, iterations, samtools_flagstats, verbose, true);
+    if (isok == false) {
+        printf("Problem detected with %u.\n", 0);
+    }
+    if (verbose)
+        printf("\n");
 
     #if defined(STORM_HAVE_SSE42)
         if ((cpuid & STORM_CPUID_runtime_bit_SSE42)) {

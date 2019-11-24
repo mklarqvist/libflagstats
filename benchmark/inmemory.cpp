@@ -40,6 +40,9 @@ public:
 
         uint32_t sse4[32];
         run("SSE4", FLAGSTAT_sse4, sse4, nullptr);
+
+        uint32_t sse4_improved[32];
+        run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4);
     }
 
 private:

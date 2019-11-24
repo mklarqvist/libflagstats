@@ -1157,6 +1157,210 @@ int FLAGSTAT_avx512(const uint16_t* array, uint32_t len, uint32_t* flags) {
 
     return 0;
 }
+
+STORM_TARGET("avx512bw")
+static
+int FLAGSTAT_avx512_improved(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
+    for (uint32_t i = len - (len % (32 * 16)); i < len; ++i) {
+        FLAGSTAT_scalar_update(array[i], flags);
+    }
+
+    const __m512i* data = (const __m512i*)array;
+    size_t size = len / 32;
+    __m512i v1  = _mm512_setzero_si512();
+    __m512i v2  = _mm512_setzero_si512();
+    __m512i v4  = _mm512_setzero_si512();
+    __m512i v8  = _mm512_setzero_si512();
+    __m512i v16 = _mm512_setzero_si512();
+    __m512i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    __m512i v1U  = _mm512_setzero_si512();
+    __m512i v2U  = _mm512_setzero_si512();
+    __m512i v4U  = _mm512_setzero_si512();
+    __m512i v8U  = _mm512_setzero_si512();
+    __m512i v16U = _mm512_setzero_si512();
+    __m512i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
+
+    const uint64_t limit = size - size % 16;
+    uint64_t i = 0;
+    uint16_t buffer[32];
+    __m512i counter[16]; 
+    __m512i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m512i m1   = _mm512_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m512i m1S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m2   = _mm512_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m512i m2S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m3   = _mm512_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m512i m4   = _mm512_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m512i one  = _mm512_set1_epi16(1); // (00...1) vector
+    const __m512i zero = _mm512_set1_epi16(0); // (00...0) vector
+
+    while (i < limit) {
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm512_setzero_si512();
+            counterU[i] = _mm512_setzero_si512();
+        }
+
+        size_t thislimit = limit;
+        if (thislimit - i >= (1 << 16))
+            thislimit = i + (1 << 16) - 1;
+
+#define W(j) __m512i data##j = _mm512_loadu_si512(data + i + j);
+#define O1(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FPROPER_PAIR)), (uint16_t)1 << 12); 
+#define O2(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), _mm512_set1_epi16(FLAGSTAT_FMUNMAP)), (uint16_t)1 << 13);
+#define O3(j) data##j = data##j |   _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(data##j & _mm512_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP), zero), (uint16_t)1 << 14);
+#define L1(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m1), zero),65535) | m1S);
+#define L2(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m2), zero),65535) | m2S);
+#define L3(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m3), m3),  65535) | m2S);
+#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define L(j)  data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, zero ), 65535)
+#define LU(j) data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, m4 ),   65535)
+
+        for (/**/; i < thislimit; i += 16) {
+#define U(pos) {                     \
+    counter[pos] = _mm512_add_epi16(counter[pos], _mm512_and_si512(v16, one)); \
+    v16 = _mm512_srli_epi16(v16, 1); \
+}
+#define UU(pos) {                      \
+    counterU[pos] = _mm512_add_epi16(counterU[pos], _mm512_and_si512(v16U, one)); \
+    v16U = _mm512_srli_epi16(v16U, 1); \
+}
+            LOAD(0) LOAD(1)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 0),  L( 1));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU( 0), LU( 1));
+            LOAD(2) LOAD(3)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L( 2),  L( 3));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU( 2), LU( 3));
+            STORM_pospopcnt_csa_avx512(&foursA,  &v2,  twosA, twosB);
+            STORM_pospopcnt_csa_avx512(&foursAU, &v2U, twosAU, twosBU);
+            LOAD(4) LOAD(5)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 4),  L( 5));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU( 4), LU( 5));
+            LOAD(6) LOAD(7)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L( 6),  L( 7));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU( 6), LU( 7));
+            STORM_pospopcnt_csa_avx512(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_avx512(&eightsA, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_avx512(&eightsAU,&v4U, foursAU, foursBU);
+            LOAD(8) LOAD(9)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 8),   L( 9));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU( 8),  LU( 9));
+            LOAD(10) LOAD(11)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L(10),   L(11));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU(10),  LU(11));
+            STORM_pospopcnt_csa_avx512(&foursA,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&foursAU, &v2U, twosAU,  twosBU);
+            LOAD(12) LOAD(13)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L(12),   L(13));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU(12),  LU(13));
+            LOAD(14) LOAD(15)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L(14),   L(15));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU(14),  LU(15));
+            STORM_pospopcnt_csa_avx512(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_avx512(&eightsB, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_avx512(&eightsBU,&v4U, foursAU, foursBU);
+             U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15) // Updates
+            UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
+            STORM_pospopcnt_csa_avx512(&v16,     &v8,  eightsA,  eightsB);
+            STORM_pospopcnt_csa_avx512(&v16U,    &v8U, eightsAU, eightsBU);
+#undef U
+#undef UU
+#undef LOAD
+#undef L
+#undef LU
+#undef W
+#undef O1
+#undef O2
+#undef O3
+#undef L1
+#undef L2
+#undef L3
+        }
+
+        // Update the counters after the last iteration
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm512_add_epi16(counter[i], _mm512_and_si512(v16, one));
+            v16  = _mm512_srli_epi16(v16, 1);
+            counterU[i] = _mm512_add_epi16(counterU[i], _mm512_and_si512(v16U, one));
+            v16U = _mm512_srli_epi16(v16U, 1);
+        }
+        
+        for (size_t i = 0; i < 16; ++i) {
+            _mm512_storeu_si512((__m512i*)buffer, counter[i]);
+            for (size_t z = 0; z < 32; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
+            }
+
+            _mm512_storeu_si512((__m512i*)buffer, counterU[i]);
+            for (size_t z = 0; z < 32; z++) {
+                flags[16+i] += 16 * (uint32_t)buffer[z];
+            }
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v1);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v1U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v2);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v2U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v4);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v4U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v8);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v8U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
+
+    return 0;
+}
 #endif // end AVX512
 
 /* *************************************

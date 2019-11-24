@@ -43,6 +43,12 @@ public:
 
         uint32_t sse4_improved[32];
         run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4, time_sse4);
+
+        uint32_t avx512[32];
+        const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, sse4);
+
+        uint32_t avx512_improved[32];
+        const uint64_t time_avx512_imrpvoed = run("AVX512 improved", FLAGSTAT_avx512_improved, avx512_improved, sse4, time_avx512);
     }
 
 private:
@@ -124,7 +130,7 @@ private:
 };
 
 int main() {
-    Application app(1024 * 1000);
+    Application app(1024 * 1);
     app.run();
 }
 

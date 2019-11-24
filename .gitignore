@@ -35,6 +35,7 @@
 bench
 utility
 generate
+inmemory
 .vscode
 python/dist
 python/*-info

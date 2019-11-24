@@ -36,13 +36,13 @@ public:
 
     void run() {
         uint32_t scalar[32];
-        run("scalar", FLAGSTAT_scalar, scalar, nullptr);
+        run("scalar", FLAGSTAT_scalar, scalar);
 
         uint32_t sse4[32];
-        run("SSE4", FLAGSTAT_sse4, sse4, nullptr);
+        const uint64_t time_sse4 = run("SSE4", FLAGSTAT_sse4, sse4);
 
         uint32_t sse4_improved[32];
-        run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4);
+        run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4, time_sse4);
     }
 
 private:
@@ -57,8 +57,13 @@ private:
     }
 
     template <typename FUN>
-    void run(const char* name, FUN function, uint32_t* stats, uint32_t* stats_ref) {
-        out << "Running function " << name << " ";
+    uint64_t run(const char* name,
+                 FUN function,
+                 uint32_t* stats,
+                 uint32_t* stats_ref = nullptr,
+                 uint64_t time_ref = 0)
+    {
+        out << "Running function " << name << ": ";
         out << std::flush;
 
         for (int i=0; i < 32; i++) stats[i] = 0;
@@ -67,13 +72,18 @@ private:
         function(flags.get(), size, stats);
         const auto t2 = Clock::now();
         
-        out << elapsed(t1, t2) << " us";
+        const uint16_t time_us = elapsed(t1, t2);
+        out << "time " << time_us << " us";
+        if (time_ref != 0)
+            out << " (speedup: " << double(time_ref)/time_us << ")";
         out << '\n';
         dump_stats(stats);
 
         if (stats_ref != nullptr) {
             const bool has_error = compare(stats_ref, stats);
         }
+
+        return time_us;
     }
 
     void dump_array(uint32_t* arr, int size) {

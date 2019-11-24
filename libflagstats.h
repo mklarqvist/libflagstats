@@ -1218,9 +1218,10 @@ int FLAGSTAT_avx512_improved(const uint16_t* array, uint32_t len, uint32_t* flag
 #define L1(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m1), zero),65535) | m1S);
 #define L2(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m2), zero),65535) | m2S);
 #define L3(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m3), m3),  65535) | m2S);
-#define LOAD(j) W(j) O1(j) O2(j) L1(j) L2(j) L3(j)
-#define L(j)  data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, zero ), 65535)
-#define LU(j) data##j & _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask( data##j & m4, m4 ),   65535)
+#define L4(j) const __m512i qcfail_mask##j = _mm512_maskz_set1_epi16(_mm512_test_epi16_mask(data##j, m4), 0xffff);
+#define LOAD(j) W(j) O1(j) O2(j) L1(j) L2(j) L3(j) L4(j)
+#define L(j)  _mm512_andnot_si512(qcfail_mask##j, data##j)
+#define LU(j) _mm512_and_si512(qcfail_mask##j, data##j)
 
         for (/**/; i < thislimit; i += 16) {
 #define U(pos) {                     \

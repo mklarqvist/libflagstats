@@ -130,7 +130,7 @@ private:
 };
 
 int main() {
-    Application app(1024 * 2);
+    Application app(1024 * 100);
     app.run();
 }
 

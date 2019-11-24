@@ -51,7 +51,7 @@ utility: benchmark/utility.cpp
 generate: benchmark/generate.cpp
 	$(CXX) $(CPPFLAGS) -o $@ $<
 
-inmemory: benchmark/inmemory.cpp
+inmemory: benchmark/inmemory.cpp libflagstats.h
 	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) -o $@ $<
 
 bench.o: benchmark/flagstats.cpp

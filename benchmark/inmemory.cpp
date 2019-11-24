@@ -145,7 +145,7 @@ private:
 };
 
 int main() {
-    Application app(1024 * 1);
+    Application app(1024 * 100);
     app.run();
 }
 

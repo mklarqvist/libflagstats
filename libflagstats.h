@@ -1215,9 +1215,9 @@ int FLAGSTAT_avx512_improved(const uint16_t* array, uint32_t len, uint32_t* flag
 #define W(j) __m512i data##j = _mm512_loadu_si512(data + i + j);
 #define O1(j) const __m512i complete_index##j = data##j & _mm512_set1_epi16(0x000f);
 #define O2(j) data##j = data##j | _mm512_permutexvar_epi16(complete_index##j, complete_bits_lookup);
-#define L1(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m1), zero),65535) | m1S);
-#define L2(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m2), zero),65535) | m2S);
-#define L3(j) data##j = data##j & (_mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask((data##j & m3), m3),  65535) | m2S);
+#define L1(j) data##j = _mm512_ternarylogic_epi32(data##j, _mm512_maskz_set1_epi16(_mm512_testn_epi16_mask(data##j, m1), 65535), m1S, 0xe0); // 0xe0 = a & (b | c)
+#define L2(j) data##j = _mm512_ternarylogic_epi32(data##j, _mm512_maskz_set1_epi16(_mm512_testn_epi16_mask(data##j, m2), 65535), m2S, 0xe0); // 0xe0 = a & (b | c)
+#define L3(j) data##j = _mm512_ternarylogic_epi32(data##j, _mm512_maskz_set1_epi16(_mm512_test_epi16_mask(data##j, m3), 65535), m2S, 0xe0); // 0xe0 = a & (b | c)
 #define L4(j) const __m512i qcfail_mask##j = _mm512_maskz_set1_epi16(_mm512_test_epi16_mask(data##j, m4), 0xffff);
 #define LOAD(j) W(j) O1(j) O2(j) L1(j) L2(j) L3(j) L4(j)
 #define L(j)  _mm512_andnot_si512(qcfail_mask##j, data##j)

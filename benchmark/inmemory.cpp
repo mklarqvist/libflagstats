@@ -1,9 +1,10 @@
 #include <iostream>
+#include <iomanip>
 #include <chrono>
 #include <memory>
 #include <cstdint>
 #include <random>
-#include <iomanip>
+#include <vector>
 
 #include "libalgebra.h" // pospopcnt
 
@@ -116,11 +117,25 @@ private:
 
     bool compare(uint32_t* reference, uint32_t* stats) {
         bool has_error = false;
-        for (int i=0; i < 32; i++) {
-            const uint32_t expected = reference[i];
-            const uint32_t actual = stats[i];
+        // test only the counters actually written by FLAGSTAT_scalar_update
+        static const std::vector<int> tested_counters{
+            FLAGSTAT_FQCFAIL_OFF,
+            FLAGSTAT_FSECONDARY_OFF,
+            FLAGSTAT_FSUPPLEMENTARY_OFF,
+            FLAGSTAT_BIT12_OFF,
+            FLAGSTAT_FREAD1_OFF,
+            FLAGSTAT_FREAD2_OFF,
+            FLAGSTAT_BIT13_OFF,
+            FLAGSTAT_BIT14_OFF,
+            FLAGSTAT_FUNMAP_OFF,
+            FLAGSTAT_FDUP_OFF
+        };
+
+        for (const int index: tested_counters) {
+            const uint32_t expected = reference[index];
+            const uint32_t actual = stats[index];
             if (expected != actual) {
-                out << "Difference at " << i << ": expected = " << expected << ", actual = " << actual << '\n';
+                out << "Difference at " << index << ": expected = " << expected << ", actual = " << actual << '\n';
                 has_error = true;
             }
         }

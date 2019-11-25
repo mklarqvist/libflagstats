@@ -36,20 +36,48 @@ public:
     }
 
     void run() {
+#if defined(STORM_HAVE_CPUID)
+    #if defined(__cplusplus)
+    /* C++11 thread-safe singleton */
+    static const int cpuid = STORM_get_cpuid();
+    #else
+    static int cpuid_ = -1;
+    int cpuid = cpuid_;
+    if (cpuid == -1) {
+        cpuid = STORM_get_cpuid();
+
+    #if defined(_MSC_VER)
+        _InterlockedCompareExchange(&cpuid_, cpuid, -1);
+    #else
+        __sync_val_compare_and_swap(&cpuid_, -1, cpuid);
+    #endif
+    }
+    #endif
+#endif
+
         uint32_t scalar[32];
         run("scalar", FLAGSTAT_scalar, scalar);
 
+ #if defined(STORM_HAVE_SSE42)
         uint32_t sse4[32];
-        const uint64_t time_sse4 = run("SSE4", FLAGSTAT_sse4, sse4);
+        if ((cpuid & STORM_CPUID_runtime_bit_SSE42)) {
+            const uint64_t time_sse4 = run("SSE4", FLAGSTAT_sse4, sse4);
 
-        uint32_t sse4_improved[32];
-        run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4, time_sse4);
+            uint32_t sse4_improved[32];
+            run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4, time_sse4);
+        }
+    // }
+#endif
 
+    #if defined(STORM_HAVE_AVX512)
         uint32_t avx512[32];
-        const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, sse4);
+        if ((cpuid & STORM_CPUID_runtime_bit_AVX512BW)) {
+            const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, sse4);
 
-        uint32_t avx512_improved[32];
-        const uint64_t time_avx512_imrpvoed = run("AVX512 improved", FLAGSTAT_avx512_improved, avx512_improved, sse4, time_avx512);
+            uint32_t avx512_improved[32];
+            const uint64_t time_avx512_imrpvoed = run("AVX512 improved", FLAGSTAT_avx512_improved, avx512_improved, sse4, time_avx512);
+        }
+    #endif
     }
 
 private:

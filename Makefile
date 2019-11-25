@@ -19,7 +19,7 @@
 OPTFLAGS  := -O3 -march=native
 CFLAGS     = -std=c99 $(OPTFLAGS) $(DEBUG_FLAGS)
 CPPFLAGS   = -std=c++0x $(OPTFLAGS) $(DEBUG_FLAGS)
-CPP_SOURCE = benchmark/flagstats.cpp benchmark/utility.cpp benchmark/generate.cpp
+CPP_SOURCE = benchmark/flagstats.cpp benchmark/utility.cpp benchmark/generate.cpp benchmark/inmemory.cpp
 C_SOURCE   = 
 OBJECTS    = $(CPP_SOURCE:.cpp=.o) $(C_SOURCE:.c=.o)
 
@@ -50,6 +50,9 @@ utility: benchmark/utility.cpp
 
 generate: benchmark/generate.cpp
 	$(CXX) $(CPPFLAGS) -o $@ $<
+
+inmemory: benchmark/inmemory.cpp libflagstats.h
+	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) -o $@ $<
 
 bench.o: benchmark/flagstats.cpp
 	$(CXX) $(CPPFLAGS) -I$(POSPOPCNT_PATH) $(INCLUDE_PATHS) -c -o $@ $<

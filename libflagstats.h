@@ -101,6 +101,15 @@
 /*! @abstract supplementary alignment */
 #define FLAGSTAT_FSUPPLEMENTARY     2048
 #define FLAGSTAT_FSUPPLEMENTARY_OFF   11
+/*! @abstract auxilary bit #12 set by SIMD procedures */
+#define FLAGSTAT_BIT12              (1 << 12)
+#define FLAGSTAT_BIT12_OFF          12
+/*! @abstract auxilary bit #13 set by SIMD procedures */
+#define FLAGSTAT_BIT13              (1 << 13)
+#define FLAGSTAT_BIT13_OFF          13
+/*! @abstract auxilary bit #14 set by SIMD procedures */
+#define FLAGSTAT_BIT14              (1 << 14)
+#define FLAGSTAT_BIT14_OFF          14
 
 #ifdef __cplusplus
 extern "C" {
@@ -121,11 +130,11 @@ void FLAGSTAT_scalar_update(uint16_t val, uint32_t* flags) {
     else if (val & FLAGSTAT_FSUPPLEMENTARY) ++f[FLAGSTAT_FSUPPLEMENTARY_OFF];
     else if (val & FLAGSTAT_FPAIRED) {
         // ++(s)->n_pair_all[w];              
-        if ( (val & FLAGSTAT_FPROPER_PAIR) && !(val & FLAGSTAT_FUNMAP) ) ++f[12];
+        if ( (val & FLAGSTAT_FPROPER_PAIR) && !(val & FLAGSTAT_FUNMAP) ) ++f[FLAGSTAT_BIT12_OFF];
         if (val & FLAGSTAT_FREAD1) ++f[FLAGSTAT_FREAD1_OFF];
         if (val & FLAGSTAT_FREAD2) ++f[FLAGSTAT_FREAD2_OFF];
-        if ((val & FLAGSTAT_FMUNMAP) && !(val & FLAGSTAT_FUNMAP))  ++f[13];
-        if (!(val & FLAGSTAT_FUNMAP) && !(val & FLAGSTAT_FMUNMAP)) ++f[14];
+        if ((val & FLAGSTAT_FMUNMAP) && !(val & FLAGSTAT_FUNMAP))  ++f[FLAGSTAT_BIT13_OFF];
+        if (!(val & FLAGSTAT_FUNMAP) && !(val & FLAGSTAT_FMUNMAP)) ++f[FLAGSTAT_BIT14_OFF];
     }
     // Count as is FUNMAP then use arithmetic to compute N - FUNMAP
     if (val & FLAGSTAT_FUNMAP) ++f[FLAGSTAT_FUNMAP_OFF];
@@ -273,6 +282,275 @@ int FLAGSTAT_sse4(const uint16_t* array, uint32_t len, uint32_t* flags) {
 #define O1(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP)), _mm_set1_epi16(FLAGSTAT_FPROPER_PAIR)) & one, 12); 
 #define O2(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), _mm_set1_epi16(FLAGSTAT_FMUNMAP)) & one, 13); 
 #define O3(j) data##j = data##j | _mm_slli_epi16(data##j & _mm_cmpeq_epi16((data##j & _mm_set1_epi16(FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP)), zero) & one, 14); 
+#define L1(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m1), zero) | m1S);
+#define L2(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m2), zero) | m2S);
+#define L3(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m3), m3)   | m2S);
+#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define L(j)  data##j & _mm_cmpeq_epi16( data##j & m4, zero )
+#define LU(j) data##j & _mm_cmpeq_epi16( data##j & m4, m4 )
+        
+        for (/**/; i < thislimit; i += 16) {
+#define U(pos) {                     \
+    counter[pos] = _mm_add_epi16(counter[pos], _mm_and_si128(v16, one));    \
+    v16 = _mm_srli_epi16(v16, 1); \
+}
+#define UU(pos) {                      \
+    counterU[pos] = _mm_add_epi16(counterU[pos], _mm_and_si128(v16U, one)); \
+    v16U = _mm_srli_epi16(v16U, 1); \
+}
+            LOAD(0) LOAD(1)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L( 0),  L( 1));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU( 0), LU( 1));
+            LOAD(2) LOAD(3)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L( 2),  L( 3));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU( 2), LU( 3));
+            STORM_pospopcnt_csa_sse(&foursA,  &v2,  twosA, twosB);
+            STORM_pospopcnt_csa_sse(&foursAU, &v2U, twosAU, twosBU);
+            LOAD(4) LOAD(5)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L( 4),  L( 5));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU( 4), LU( 5));
+            LOAD(6) LOAD(7)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L( 6),  L( 7));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU( 6), LU( 7));
+            STORM_pospopcnt_csa_sse(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_sse(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_sse(&eightsA, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_sse(&eightsAU,&v4U, foursAU, foursBU);
+            LOAD(8) LOAD(9)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L( 8),   L( 9));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU( 8),  LU( 9));
+            LOAD(10) LOAD(11)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L(10),   L(11));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU(10),  LU(11));
+            STORM_pospopcnt_csa_sse(&foursA,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_sse(&foursAU, &v2U, twosAU,  twosBU);
+            LOAD(12) LOAD(13)
+            STORM_pospopcnt_csa_sse(&twosA,   &v1,  L(12),   L(13));
+            STORM_pospopcnt_csa_sse(&twosAU,  &v1U, LU(12),  LU(13));
+            LOAD(14) LOAD(15)
+            STORM_pospopcnt_csa_sse(&twosB,   &v1,  L(14),   L(15));
+            STORM_pospopcnt_csa_sse(&twosBU,  &v1U, LU(14),  LU(15));
+            STORM_pospopcnt_csa_sse(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_sse(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_sse(&eightsB, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_sse(&eightsBU,&v4U, foursAU, foursBU);
+             U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15) // Updates
+            UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
+            STORM_pospopcnt_csa_sse(&v16,     &v8,  eightsA,  eightsB);
+            STORM_pospopcnt_csa_sse(&v16U,    &v8U, eightsAU, eightsBU);
+#undef U
+#undef UU
+#undef LOAD
+#undef L
+#undef LU
+#undef W
+#undef O1
+#undef O2
+#undef O3
+#undef L1
+#undef L2
+#undef L3
+        }
+
+        // Update the counters after the last iteration
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm_add_epi16(counter[i], _mm_and_si128(v16, one));
+            v16  = _mm_srli_epi16(v16, 1);
+            counterU[i] = _mm_add_epi16(counterU[i], _mm_and_si128(v16U, one));
+            v16U = _mm_srli_epi16(v16U, 1);
+        }
+        
+        for (size_t i = 0; i < 16; ++i) {
+            _mm_storeu_si128((__m128i*)buffer, counter[i]);
+            for (size_t z = 0; z < 8; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
+            }
+
+            _mm_storeu_si128((__m128i*)buffer, counterU[i]);
+            for (size_t z = 0; z < 8; z++) {
+                flags[16+i] += 16 * (uint32_t)buffer[z];
+            }
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v1);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v1U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v2);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v2U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v4);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v4U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm_storeu_si128((__m128i*)buffer, v8);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm_storeu_si128((__m128i*)buffer, v8U);
+    for (size_t i = 0; i < 8; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
+
+    return 0;
+}
+
+STORM_TARGET("sse4.2")
+static
+int FLAGSTAT_sse4_improved(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
+    for (uint32_t i = len - (len % (16 * 8)); i < len; ++i) {
+        FLAGSTAT_scalar_update(array[i], flags);
+    }
+
+    const __m128i* data = (const __m128i*)array;
+    size_t size = len / 8;
+    __m128i v1  = _mm_setzero_si128();
+    __m128i v2  = _mm_setzero_si128();
+    __m128i v4  = _mm_setzero_si128();
+    __m128i v8  = _mm_setzero_si128();
+    __m128i v16 = _mm_setzero_si128();
+    __m128i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    __m128i v1U  = _mm_setzero_si128();
+    __m128i v2U  = _mm_setzero_si128();
+    __m128i v4U  = _mm_setzero_si128();
+    __m128i v8U  = _mm_setzero_si128();
+    __m128i v16U = _mm_setzero_si128();
+    __m128i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
+
+    const uint64_t limit = size - size % 16;
+    uint64_t i = 0;
+    uint16_t buffer[8];
+    __m128i counter[16];
+    __m128i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m128i m1   = _mm_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m128i m1S  = _mm_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m128i m2   = _mm_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m128i m2S  = _mm_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m128i m3   = _mm_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m128i m4   = _mm_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m128i one  = _mm_set1_epi16(1); // (00...1) vector
+    const __m128i zero = _mm_set1_epi16(0); // (00...0) vector
+
+    const __m128i complete_bits_lookup = _mm_setr_epi8( // generated by expand_data.py
+        0x00, 0x40, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00);
+
+    // Main body.
+    while (i < limit) {        
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm_setzero_si128();
+            counterU[i] = _mm_setzero_si128();
+        }
+
+        size_t thislimit = limit;
+        if (thislimit - i >= (1 << 16))
+            thislimit = i + (1 << 16) - 1;
+
+        ///////////////////////////////////////////////////////////////////////
+        // We load a register of data (data + i + j) and then construct the
+        // conditional bits:
+        // 12: FLAGSTAT_FPROPER_PAIR + FLAGSTAT_FUNMAP == FLAGSTAT_FPROPER_PAIR
+        // 13: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == FLAGSTAT_FMUNMAP
+        // 14: FLAGSTAT_FMUNMAP + FLAGSTAT_FUNMAP == 0
+        /*
+            The bits span the lower 4 bits of flag set and this makes that
+            suitable for use pshufb to quickly lookup desired bits. The lookup
+            must be done only for the higer byte of 16-bit word, the lower
+            byte must be zeroed. Such a transformed input must be or-ed with
+            the input word.
+                               FLAGSTAT_FMUNMAP
+                               |FLAGSTAT_FUNMAP
+                               ||FLAGSTAT_FPROPER_PAIR
+                               |||FLAGSTAT_FPAIRED
+                               ||||
+            input word:  [0000|xxxx|1000|0000]
+                                    |
+                                    forces zeoring
+                           bit14
+                           |bit13
+                           ||bit12
+                           |||
+            output word: [0abc|0000|0000|0000]
+        */
+        // The original SAMtools method is also heavily branched with three
+        // main branch points:
+        // If FLAGSTAT_FSECONDARY then count FLAGSTAT_FSECONDARY
+        // If FLAGSTAT_FSUPPLEMENTARY then count FLAGSTAT_FSUPPLEMENTARY
+        // Else then count FLAGSTAT_FREAD1, 
+        //                 FLAGSTAT_FREAD2,
+        //                 Special bit 12, 13, and 14
+        // Always count FLAGSTAT_FUNMAP, 
+        //              FLAGSTAT_FDUP, 
+        //              FLAGSTAT_FQCFAIL
+        //
+        // These bits can be selected using a mask-select propagate-carry approach:
+        // x &= x & ((x == MASK) | CARRY_BITS)
+        // with the arguments for MASK and CARRY_BITS as follows:
+        //    1. {FLAGSTAT_FSECONDARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    2. {FLAGSTAT_FSUPPLEMENTARY, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //    3. {FLAGSTAT_FPAIRED, 
+        //        FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY 
+        //        + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP}
+        //
+        // FLAGSTATS outputs summary statistics separately for reads that pass
+        // QC and those that do not. Therefore we need to partition the data
+        // into these two classes. For data that pass QC, the L registers, we
+        // first bit-select the target FLAGSTAT_FQCFAIL bit using the mask
+        // mask3. The resulting data is used to perform another mask-select
+        // using VPCMPEQW against the empty vector (00...0). As above, if the
+        // data has the FLAGSTAT_FQCFAIL bit set then this register will be
+        // zeroed out. The exact process is performed for reads that fail QC,
+        // the LU registers, with the difference that mask-selection is based on
+        // the one vector (00...1).
+
+#define W(j) __m128i data##j = _mm_loadu_si128(data + i + j);
+#define O1(j) const __m128i complete_index##j = \
+                _mm_slli_epi16(data##j, 8) & _mm_set1_epi16(0x0f00) | _mm_set1_epi16(0x0080);
+#define O2(j) data##j = data##j | _mm_shuffle_epi8(complete_bits_lookup, complete_index##j);
+#define O3(j) 
 #define L1(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m1), zero) | m1S);
 #define L2(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m2), zero) | m2S);
 #define L3(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m3), m3)   | m2S);
@@ -805,6 +1083,242 @@ int FLAGSTAT_avx512(const uint16_t* array, uint32_t len, uint32_t* flags) {
 #undef O1
 #undef O2
 #undef O3
+#undef L1
+#undef L2
+#undef L3
+        }
+
+        // Update the counters after the last iteration
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm512_add_epi16(counter[i], _mm512_and_si512(v16, one));
+            v16  = _mm512_srli_epi16(v16, 1);
+            counterU[i] = _mm512_add_epi16(counterU[i], _mm512_and_si512(v16U, one));
+            v16U = _mm512_srli_epi16(v16U, 1);
+        }
+        
+        for (size_t i = 0; i < 16; ++i) {
+            _mm512_storeu_si512((__m512i*)buffer, counter[i]);
+            for (size_t z = 0; z < 32; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
+            }
+
+            _mm512_storeu_si512((__m512i*)buffer, counterU[i]);
+            for (size_t z = 0; z < 32; z++) {
+                flags[16+i] += 16 * (uint32_t)buffer[z];
+            }
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v1);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v1U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v2);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v2U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v4);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v4U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v8);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+    _mm512_storeu_si512((__m512i*)buffer, v8U);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[16+j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    // QC
+    flags[FLAGSTAT_FQCFAIL_OFF] += len - (flags[FLAGSTAT_FQCFAIL_OFF+16] - start_qc);
+
+    return 0;
+}
+
+STORM_TARGET("avx512bw")
+static
+int FLAGSTAT_avx512_improved(const uint16_t* array, uint32_t len, uint32_t* flags) {
+    const uint32_t start_qc = flags[FLAGSTAT_FQCFAIL_OFF + 16];
+    
+    for (uint32_t i = len - (len % (32 * 16)); i < len; ++i) {
+        FLAGSTAT_scalar_update(array[i], flags);
+    }
+
+    const __m512i* data = (const __m512i*)array;
+    size_t size = len / 32;
+    __m512i v1  = _mm512_setzero_si512();
+    __m512i v2  = _mm512_setzero_si512();
+    __m512i v4  = _mm512_setzero_si512();
+    __m512i v8  = _mm512_setzero_si512();
+    __m512i v16 = _mm512_setzero_si512();
+    __m512i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    __m512i v1U  = _mm512_setzero_si512();
+    __m512i v2U  = _mm512_setzero_si512();
+    __m512i v4U  = _mm512_setzero_si512();
+    __m512i v8U  = _mm512_setzero_si512();
+    __m512i v16U = _mm512_setzero_si512();
+    __m512i twosAU, twosBU, foursAU, foursBU, eightsAU, eightsBU;
+
+    const uint64_t limit = size - size % 16;
+    uint64_t i = 0;
+    uint16_t buffer[32];
+    __m512i counter[16]; 
+    __m512i counterU[16];
+    
+    // Masks and mask selectors.
+    const __m512i m1   = _mm512_set1_epi16(FLAGSTAT_FSECONDARY);
+    const __m512i m1S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m2   = _mm512_set1_epi16(FLAGSTAT_FSUPPLEMENTARY);
+    const __m512i m2S  = _mm512_set1_epi16(FLAGSTAT_FQCFAIL + FLAGSTAT_FSUPPLEMENTARY + FLAGSTAT_FSECONDARY + FLAGSTAT_FUNMAP + FLAGSTAT_FDUP);
+    const __m512i m3   = _mm512_set1_epi16(FLAGSTAT_FPAIRED);
+    const __m512i m4   = _mm512_set1_epi16(FLAGSTAT_FQCFAIL);
+    const __m512i one  = _mm512_set1_epi16(1); // (00...1) vector
+    const __m512i zero = _mm512_set1_epi16(0); // (00...0) vector
+
+    // generated by expand_data.py
+    const __m512i complete_bits_lookup = _mm512_setr_epi32(
+        0x40000000, 0x50000000, 0x00000000, 0x00000000, 0x20000000, 0x30000000, 0x00000000, 0x00000000,
+        0x40000000, 0x50000000, 0x00000000, 0x00000000, 0x20000000, 0x30000000, 0x00000000, 0x00000000);
+
+    // generated by mask_data.py
+    const __m512i qcfail_1_lookup = _mm512_setr_epi32(
+        0x00000000, 0x07040604, 0x00000000, 0x070476c4, 0x00000000, 0x07040e04, 0x00000000, 0x07040e04,
+        0x00000000, 0x07040604, 0x00000000, 0x070476c4, 0x00000000, 0x07040e04, 0x00000000, 0x07040e04);
+
+    // generated by mask_data.py
+    const __m512i qcfail_0_lookup = _mm512_setr_epi32(
+        0x07040604, 0x00000000, 0x070476c4, 0x00000000, 0x07040e04, 0x00000000, 0x07040e04, 0x00000000,
+        0x07040604, 0x00000000, 0x070476c4, 0x00000000, 0x07040e04, 0x00000000, 0x07040e04, 0x00000000);
+
+    while (i < limit) {
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm512_setzero_si512();
+            counterU[i] = _mm512_setzero_si512();
+        }
+
+        size_t thislimit = limit;
+        if (thislimit - i >= (1 << 16))
+            thislimit = i + (1 << 16) - 1;
+
+
+#define W(j) __m512i data##j = _mm512_loadu_si512(data + i + j);
+#define O1(j) data##j = data##j | _mm512_permutexvar_epi16(data##j, complete_bits_lookup);
+        /*
+            We're gathering bits that decides about the major control flow.
+            The resulting value will be issued to lookup instructions, that
+            provides masks for data
+
+                  FLAGSTAT_FSUPPLEMENTARY
+                  | FLAGSTAT_FQCFAIL
+                  | |FLAGSTAT_FSECONDARY
+                  | ||         FLAGSTAT_FPAIRED
+                  | ||         |
+            [....|x.yw|....|...z]  (. = garbage)
+
+            This is the layout of words obtained in L1
+
+            [0000|0000|0000|xzyw]
+        */
+
+// We're using 32-bit shifts, as they're faster than 16-bit shifts.
+#define L1(j) const __m512i mask_index##j = \
+                (_mm512_srli_epi32(data##j, 8) & _mm512_set1_epi16(0x0b)) | \
+                (_mm512_slli_epi32(data##j, 2) & _mm512_set1_epi16(0x04));
+#define L2(j) const __m512i mask_qcfail0_##j = _mm512_permutexvar_epi16(mask_index##j, qcfail_0_lookup);
+#define L3(j) const __m512i mask_qcfail1_##j = _mm512_permutexvar_epi16(mask_index##j, qcfail_1_lookup);
+#define LOAD(j) W(j) O1(j) L1(j) L2(j) L3(j)
+#define L(j)  _mm512_and_si512(data##j, mask_qcfail0_##j)
+#define LU(j) _mm512_and_si512(data##j, mask_qcfail1_##j)
+
+        for (/**/; i < thislimit; i += 16) {
+#define U(pos) {                     \
+    counter[pos] = _mm512_add_epi16(counter[pos], _mm512_and_si512(v16, one)); \
+    v16 = _mm512_srli_epi16(v16, 1); \
+}
+#define UU(pos) {                      \
+    counterU[pos] = _mm512_add_epi16(counterU[pos], _mm512_and_si512(v16U, one)); \
+    v16U = _mm512_srli_epi16(v16U, 1); \
+}
+            LOAD(0) LOAD(1)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 0),  L( 1));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU( 0), LU( 1));
+            LOAD(2) LOAD(3)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L( 2),  L( 3));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU( 2), LU( 3));
+            STORM_pospopcnt_csa_avx512(&foursA,  &v2,  twosA, twosB);
+            STORM_pospopcnt_csa_avx512(&foursAU, &v2U, twosAU, twosBU);
+            LOAD(4) LOAD(5)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 4),  L( 5));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU( 4), LU( 5));
+            LOAD(6) LOAD(7)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L( 6),  L( 7));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU( 6), LU( 7));
+            STORM_pospopcnt_csa_avx512(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_avx512(&eightsA, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_avx512(&eightsAU,&v4U, foursAU, foursBU);
+            LOAD(8) LOAD(9)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 8),   L( 9));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU( 8),  LU( 9));
+            LOAD(10) LOAD(11)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L(10),   L(11));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU(10),  LU(11));
+            STORM_pospopcnt_csa_avx512(&foursA,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&foursAU, &v2U, twosAU,  twosBU);
+            LOAD(12) LOAD(13)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L(12),   L(13));
+            STORM_pospopcnt_csa_avx512(&twosAU,  &v1U, LU(12),  LU(13));
+            LOAD(14) LOAD(15)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L(14),   L(15));
+            STORM_pospopcnt_csa_avx512(&twosBU,  &v1U, LU(14),  LU(15));
+            STORM_pospopcnt_csa_avx512(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&foursBU, &v2U, twosAU,  twosBU);
+            STORM_pospopcnt_csa_avx512(&eightsB, &v4,  foursA,  foursB);
+            STORM_pospopcnt_csa_avx512(&eightsBU,&v4U, foursAU, foursBU);
+             U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15) // Updates
+            UU(0) UU(1) UU(2) UU(3) UU(4) UU(5) UU(6) UU(7) UU(8) UU(9) UU(10) UU(11) UU(12) UU(13) UU(14) UU(15) // Updates
+            STORM_pospopcnt_csa_avx512(&v16,     &v8,  eightsA,  eightsB);
+            STORM_pospopcnt_csa_avx512(&v16U,    &v8U, eightsAU, eightsBU);
+#undef U
+#undef UU
+#undef LOAD
+#undef L
+#undef LU
+#undef W
+#undef O1
 #undef L1
 #undef L2
 #undef L3

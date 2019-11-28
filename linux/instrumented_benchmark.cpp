@@ -473,9 +473,17 @@ int main(int argc, char **argv) {
             }
             if (verbose) printf("\n");
 
-            printf("libflagstats-avx512bw\t");
+            printf("libflagstats-avx512bw-improved\t");
             fflush(NULL);
             isok = benchmarkMany(n, m, iterations, FLAGSTAT_avx512_improved, verbose, true);
+            if (isok == false) {
+                printf("Problem detected with %u.\n", 2);
+            }
+            if (verbose) printf("\n");
+
+            printf("libflagstats-avx512bw-improved2\t");
+            fflush(NULL);
+            isok = benchmarkMany(n, m, iterations, FLAGSTAT_avx512_improved2, verbose, true);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 2);
             }

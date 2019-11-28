@@ -59,8 +59,8 @@ public:
         run("scalar", FLAGSTAT_scalar, scalar);
 
  #if defined(STORM_HAVE_SSE42)
-        uint32_t sse4[32];
         if ((cpuid & STORM_CPUID_runtime_bit_SSE42)) {
+            uint32_t sse4[32];
             const uint64_t time_sse4 = run("SSE4", FLAGSTAT_sse4, sse4);
 
             uint32_t sse4_improved[32];
@@ -70,12 +70,15 @@ public:
 #endif
 
     #if defined(STORM_HAVE_AVX512)
-        uint32_t avx512[32];
         if ((cpuid & STORM_CPUID_runtime_bit_AVX512BW)) {
-            const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, sse4);
+            uint32_t avx512[32];
+            const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, scalar);
 
             uint32_t avx512_improved[32];
-            const uint64_t time_avx512_imrpvoed = run("AVX512 improved", FLAGSTAT_avx512_improved, avx512_improved, sse4, time_avx512);
+            const uint64_t time_avx512_improved = run("AVX512 improved", FLAGSTAT_avx512_improved, avx512_improved, scalar, time_avx512);
+
+            uint32_t avx512_improved2[32];
+            const uint64_t time_avx512_improved2 = run("AVX512 improved 2", FLAGSTAT_avx512_improved2, avx512_improved2, scalar, time_avx512_improved);
         }
     #endif
     }
@@ -172,8 +175,14 @@ private:
     }
 };
 
-int main() {
-    Application app(1024 * 100);
+int main(int argc, char* argv[]) {
+    const size_t default_size = 1024 * 100;
+
+    size_t size = default_size;
+    if (argc > 1)
+        size = atoi(argv[1]);
+
+    Application app(size);
     app.run();
 }
 

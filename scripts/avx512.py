@@ -9,7 +9,8 @@ def word2byte_array(array):
 
     return res
 
-def avx512_const(array):
+
+def avx512_dwords(array):
     assert len(array) == 64
     dwords = []
     for i in range(0, 64, 4):
@@ -21,8 +22,25 @@ def avx512_const(array):
         dword = (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
         dwords.append(dword)
 
+    return dwords
+
+
+indent = ' ' * 4
+
+def avx512_const(array):
+    dwords = avx512_dwords(array)
     lo = ', '.join('0x%08x' % v for v in dwords[:8])
     hi = ', '.join('0x%08x' % v for v in dwords[8:])
-    indent = ' ' * 8
 
     return f"_mm512_setr_epi32(\n{indent}{lo},\n{indent}{hi}\n);"
+
+
+def avx512_var(name, array):
+    dwords = avx512_dwords(array)
+    lo = ', '.join('0x%08x' % v for v in dwords[:8])
+    hi = ', '.join('0x%08x' % v for v in dwords[8:])
+
+    return f"{indent}const __m512i {name} = _mm512_setr_epi32(\n" \
+           f"{indent}{indent}{lo},\n" \
+           f"{indent}{indent}{hi}\n" \
+           f"{indent});"

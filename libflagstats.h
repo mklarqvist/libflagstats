@@ -1641,7 +1641,7 @@ int FLAGSTAT_avx512_improved2(const uint16_t* array, uint32_t len, uint32_t* fla
 }
 
 /*
-    Variant 4
+    Variant 3
     --------------------------------------------------------------
 
     This variant is based on the observation that we're doing two
@@ -1844,6 +1844,7 @@ int FLAGSTAT_avx512_improved3(const uint16_t* array, uint32_t len, uint32_t* use
 #define L(j) (t3_##j & cond_mask##j & qcfail_mask##j)
 
         for (/**/; i < thislimit; i += 16) {
+
             // 16-bit counters
             __m512i qcfail_counter = _mm512_setzero_si512();
             __m512i funmap_counter_qcfail_0 = _mm512_setzero_si512();
@@ -1963,6 +1964,326 @@ int FLAGSTAT_avx512_improved3(const uint16_t* array, uint32_t len, uint32_t* use
 
     return 0;
 }
+#undef AVX512_BIT12_FQCFAIL_0
+#undef AVX512_BIT12_FQCFAIL_1
+#undef AVX512_BIT13_FQCFAIL_0
+#undef AVX512_BIT13_FQCFAIL_1
+#undef AVX512_BIT14_FQCFAIL_0
+#undef AVX512_BIT14_FQCFAIL_1
+#undef AVX512_FREAD1_FQCFAIL_0
+#undef AVX512_FREAD2_FQCFAIL_0
+#undef AVX512_FREAD1_FQCFAIL_1
+#undef AVX512_FREAD2_FQCFAIL_1
+#undef AVX512_FSECONDARY_FQCFAIL_0
+#undef AVX512_FSECONDARY_FQCFAIL_1
+#undef AVX512_FDUP_FQCFAIL_0
+#undef AVX512_FDUP_FQCFAIL_1
+#undef AVX512_FSUPPLEMENTARY_FQCFAIL_0
+#undef AVX512_FSUPPLEMENTARY_FQCFAIL_1
+
+/*
+    Variant 4
+    --------------------------------------------------------------
+
+    The idea is similar to #3, but we don't scatter the bits of interest
+    over the whole 16-bit word, but put them in lower byte and then
+    duplicate that byte.
+
+    The bits we want to re-shuffle (it's layout from the previous versions,
+    so bits #12, 13 and 14 are not actually occupied in the input word):
+
+             BIT#14
+             |   BIT#13
+             |   |   BIT#12
+             |   |   |   FSUPPLEMENTARY
+             |   |   |   |   FDUP
+             |   |   |   |   |   FQCFAIL
+             |   |   |   |   |   |   FSECONDARY
+             |   |   |   |   |   |   |   FREAD2
+             |   |   |   |   |   |   |   |   FREAD1          FUNMAP  FPAIRED
+             |   |   |   |   |   |   |   |   |               |       |
+       [ . | a | b | c | d | e | f | g | h | i | . | . | . | j | . | p ] = input
+         15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+
+    1. In the first step we need to calculate bits #12, #13 and #14 using
+       lookup as in the previous approaches (bits 0..3 are indices for lookup).
+
+       [ . | . | . | p | . | . | . | . | . | . | a | b | c | . | . | . ] = t0
+         15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+
+    2. We marge vector 'input' with 't0' and shift it right to form an
+       index for following lookups:
+
+       [ . | . | . | p | d | e | f | g | . | . | . | . | . | . | . | . ] --- merged
+       [ . | . | . | . | . | . | . | . | . | . | . | p | d | e | f | g ] = idx
+         15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+
+    3. The index 'idx' is now used to build two vectors with:
+       a. shuffled FSUPPLEMENTARY (d), FDUP (e), FSECONDARY (g), and FQCFAIL (d).
+
+       [ f | . | . | . | . | . | . | . | . | . | . | . | . | d | e | g ] = t1
+         15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+
+       b. masks for condition depending on flags: FSUPPLEMENTARY, FSECONDARY
+          and FPAIRED: let's call it 'cond_mask'
+
+    5. Populate FQCFAIL (f) which is now MSB of t1 [note: as decimal 0 or -1]:
+
+       [ f | f | f | f | f | f | f | f | f | f | f | f | f | f | f | f ] = qcfail
+         15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+
+    4. Merge t0 and t1. The lower byte has got almost all flags: FREAD1(h),
+       FREAD2(i), BIT12(a), BIT13(b), BIT14(c), FSUPPLEMENTARY(d), FDUP(e),
+       FSECONDARY(g). Only FUNMAP(j) and FQCFAIL(f) have to be counted separately.
+
+       [ 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | h | i | a | b | c | d | e | g ] = t2
+         15  14  13  12  11  10  9   8   7   6   5   4   3   2   1   0
+
+    5. If FQCFAIL=1 then shift t2 by 8.
+
+    6. Call pospopcnt(t3 & qcfail)
+
+    7. Separately count FUNMAP (j), which is bit #2 of input
+       - increment local 16-bit counter: t2 & ~qcfail & vector(0x0004)
+       - increment local 16-bit counter: t2 & qcfail & vector(0x0004)
+
+    8. add to local 16-bit counter: qcfail
+
+    9. After pospopcnt, update the global counters with these local ones updated in #7 and #8.
+       FUNMAP local counter should be divided by 4, and FQCFAIL's higer byte must be negated.
+*/
+#define AVX512_BIT12_FQCFAIL_0          5
+#define AVX512_BIT12_FQCFAIL_1          13
+#define AVX512_BIT13_FQCFAIL_0          4
+#define AVX512_BIT13_FQCFAIL_1          12
+#define AVX512_BIT14_FQCFAIL_0          3
+#define AVX512_BIT14_FQCFAIL_1          11
+#define AVX512_FREAD1_FQCFAIL_0         7
+#define AVX512_FREAD2_FQCFAIL_0         15
+#define AVX512_FREAD1_FQCFAIL_1         6
+#define AVX512_FREAD2_FQCFAIL_1         14
+#define AVX512_FSECONDARY_FQCFAIL_0     0
+#define AVX512_FSECONDARY_FQCFAIL_1     8
+#define AVX512_FDUP_FQCFAIL_0           1
+#define AVX512_FDUP_FQCFAIL_1           9
+#define AVX512_FSUPPLEMENTARY_FQCFAIL_0 2
+#define AVX512_FSUPPLEMENTARY_FQCFAIL_1 10
+
+#define avx512_bitcond(condition, true_val, false_val) _mm512_ternarylogic_epi32((condition), (true_val), (false_val), 0xca)
+#define epi16 _mm512_set1_epi16
+
+STORM_TARGET("avx512bw")
+static
+int FLAGSTAT_avx512_improved4(const uint16_t* array, uint32_t len, uint32_t* user_flags) {
+    for (uint32_t i = len - (len % (32 * 16)); i < len; ++i) {
+        FLAGSTAT_scalar_update(array[i], user_flags);
+    }
+
+    uint32_t flags[16];
+    for (int i=0; i < 16; i++)
+        flags[i] = 0;
+
+    const __m512i* data = (const __m512i*)array;
+    size_t size = len / 32;
+    __m512i v1  = _mm512_setzero_si512();
+    __m512i v2  = _mm512_setzero_si512();
+    __m512i v4  = _mm512_setzero_si512();
+    __m512i v8  = _mm512_setzero_si512();
+    __m512i v16 = _mm512_setzero_si512();
+    __m512i twosA, twosB, foursA, foursB, eightsA, eightsB;
+
+    const uint64_t limit = size - size % 16;
+    uint64_t i = 0;
+    uint16_t buffer[32];
+    __m512i counter[16];
+
+    // Masks and mask selectors.
+    const __m512i one  = _mm512_set1_epi16(1); // (00...1) vector
+
+    // generated by scripts/version5.py
+    const __m512i complete_bits_lookup = _mm512_setr_epi32(
+        0x18080000, 0x38280000, 0x10000000, 0x10000000, 0x10100000, 0x30300000, 0x10000000, 0x10000000,
+        0x18080000, 0x38280000, 0x10000000, 0x10000000, 0x10100000, 0x30300000, 0x10000000, 0x10000000
+    );
+
+    const __m512i reshuffle_bits_lookup = _mm512_setr_epi32(
+        0x00010000, 0x80018000, 0x00030002, 0x80038002, 0x00050004, 0x80058004, 0x00070006, 0x80078006,
+        0x00010000, 0x80018000, 0x00030002, 0x80038002, 0x00050004, 0x80058004, 0x00070006, 0x80078006
+    );
+
+    const __m512i condition_mask_lookup = _mm512_setr_epi32(
+        0x03030202, 0x03030202, 0x03030202, 0x03030202, 0x03030606, 0x03030606, 0x03030606, 0x03030606,
+        0x0303fafa, 0x0303fafa, 0x0303fafa, 0x0303fafa, 0x03030606, 0x03030606, 0x03030606, 0x03030606
+    );
+    // end of autogenered content
+
+    // 32-bit counters
+    __m512i qcfail_global_counter = _mm512_setzero_si512();
+    __m512i funmap_global_counter_qcfail_0 = _mm512_setzero_si512();
+    __m512i funmap_global_counter_qcfail_1 = _mm512_setzero_si512();
+
+    while (i < limit) {
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm512_setzero_si512();
+        }
+
+        size_t thislimit = limit;
+        if (thislimit - i >= (1 << 16))
+            thislimit = i + (1 << 16) - 1;
+
+#define LOAD(j) \
+        __m512i data##j              = _mm512_loadu_si512(data + i + j); \
+        const __m512i t0_##j         = _mm512_permutexvar_epi16(data##j, complete_bits_lookup); \
+        const __m512i idx##j         = _mm512_srli_epi32(avx512_bitcond(epi16(0x1000), t0_##j, data##j), 8); \
+        const __m512i t1_##j         = _mm512_permutexvar_epi16(idx##j, reshuffle_bits_lookup); \
+        const __m512i cond_mask##j   = _mm512_permutexvar_epi16(idx##j, condition_mask_lookup); \
+        const __m512i qcfail##j      = _mm512_srai_epi16(t1_##j, 16); \
+        const __m512i t2_##j         = avx512_bitcond(epi16(0x00c0), data##j, (t0_##j | t1_##j)) & epi16(0x00ff); \
+        const __m512i t3_##j         = _mm512_sllv_epi16(t2_##j, qcfail##j & _mm512_set1_epi16(8)); \
+        qcfail_counter = _mm512_sub_epi16(qcfail_counter, qcfail##j); \
+        funmap_counter_qcfail_0 = _mm512_add_epi16(funmap_counter_qcfail_0, \
+                                          _mm512_ternarylogic_epi32(data##j, qcfail##j, _mm512_set1_epi16(FLAGSTAT_FUNMAP), 0x20)); \
+        funmap_counter_qcfail_1 = _mm512_add_epi16(funmap_counter_qcfail_1, \
+                                          _mm512_ternarylogic_epi32(data##j, qcfail##j, _mm512_set1_epi16(FLAGSTAT_FUNMAP), 0x80));
+
+#define L(j) (t3_##j & cond_mask##j)
+
+        for (/**/; i < thislimit; i += 16) {
+            // 16-bit counters
+            __m512i qcfail_counter = _mm512_setzero_si512();
+            __m512i funmap_counter_qcfail_0 = _mm512_setzero_si512();
+            __m512i funmap_counter_qcfail_1 = _mm512_setzero_si512();
+
+#define U(pos) {                     \
+    counter[pos] = _mm512_add_epi16(counter[pos], _mm512_and_si512(v16, one)); \
+    v16 = _mm512_srli_epi16(v16, 1); \
+}
+            LOAD(0) LOAD(1)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 0),  L( 1));
+            LOAD(2) LOAD(3)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L( 2),  L( 3));
+            STORM_pospopcnt_csa_avx512(&foursA,  &v2,  twosA, twosB);
+            LOAD(4) LOAD(5)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 4),  L( 5));
+            LOAD(6) LOAD(7)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L( 6),  L( 7));
+            STORM_pospopcnt_csa_avx512(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&eightsA, &v4,  foursA,  foursB);
+            LOAD(8) LOAD(9)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L( 8),   L( 9));
+            LOAD(10) LOAD(11)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L(10),   L(11));
+            STORM_pospopcnt_csa_avx512(&foursA,  &v2,  twosA,   twosB);
+            LOAD(12) LOAD(13)
+            STORM_pospopcnt_csa_avx512(&twosA,   &v1,  L(12),   L(13));
+            LOAD(14) LOAD(15)
+            STORM_pospopcnt_csa_avx512(&twosB,   &v1,  L(14),   L(15));
+            STORM_pospopcnt_csa_avx512(&foursB,  &v2,  twosA,   twosB);
+            STORM_pospopcnt_csa_avx512(&eightsB, &v4,  foursA,  foursB);
+             U(0)  U(1)  U(2)  U(3)  U(4)  U(5)  U(6)  U(7)  U(8)  U(9)  U(10)  U(11)  U(12)  U(13)  U(14)  U(15) // Updates
+            STORM_pospopcnt_csa_avx512(&v16,     &v8,  eightsA,  eightsB);
+
+            qcfail_global_counter = _mm512_add_epi32(qcfail_global_counter,
+                                                     _mm512_madd_epi16(qcfail_counter, one));
+            funmap_global_counter_qcfail_0 =
+                _mm512_add_epi32(funmap_global_counter_qcfail_0,
+                _mm512_srli_epi16(_mm512_madd_epi16(funmap_counter_qcfail_0, one), 2));
+            funmap_global_counter_qcfail_1 =
+                _mm512_add_epi32(funmap_global_counter_qcfail_1,
+                _mm512_srli_epi16(_mm512_madd_epi16(funmap_counter_qcfail_1, one), 2));
+#undef U
+#undef UU
+#undef LOAD
+#undef L
+#undef LU
+#undef W
+#undef O1
+#undef L1
+#undef L2
+#undef L3
+        }
+
+        // Update the counters after the last iteration
+        for (size_t i = 0; i < 16; ++i) {
+            counter[i]  = _mm512_add_epi16(counter[i], _mm512_and_si512(v16, one));
+            v16  = _mm512_srli_epi16(v16, 1);
+        }
+
+        for (size_t i = 0; i < 16; ++i) {
+            _mm512_storeu_si512((__m512i*)buffer, counter[i]);
+            for (size_t z = 0; z < 32; z++) {
+                flags[i] += 16 * (uint32_t)buffer[z];
+            }
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v1);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v2);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 2 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v4);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 4 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    _mm512_storeu_si512((__m512i*)buffer, v8);
+    for (size_t i = 0; i < 32; ++i) {
+        for (int j = 0; j < 16; ++j) {
+            flags[j] += 8 * ((buffer[i] & (1 << j)) >> j);
+        }
+    }
+
+    // update flags from our custom flags table
+    user_flags[FLAGSTAT_FQCFAIL_OFF + 16]        += avx512_sum_epu32(qcfail_global_counter);
+    user_flags[FLAGSTAT_FUNMAP_OFF + 0]          += avx512_sum_epu32(funmap_global_counter_qcfail_0);
+    user_flags[FLAGSTAT_FUNMAP_OFF + 16]         += avx512_sum_epu32(funmap_global_counter_qcfail_1);
+    user_flags[FLAGSTAT_FDUP_OFF + 0]            += flags[AVX512_FDUP_FQCFAIL_0];
+    user_flags[FLAGSTAT_FDUP_OFF + 16]           += flags[AVX512_FDUP_FQCFAIL_1];
+    user_flags[FLAGSTAT_FSECONDARY_OFF + 0]      += flags[AVX512_FSECONDARY_FQCFAIL_0];
+    user_flags[FLAGSTAT_FSECONDARY_OFF + 16]     += flags[AVX512_FSECONDARY_FQCFAIL_1];
+    user_flags[FLAGSTAT_FSUPPLEMENTARY_OFF + 0]  += flags[AVX512_FSUPPLEMENTARY_FQCFAIL_0];
+    user_flags[FLAGSTAT_FSUPPLEMENTARY_OFF + 16] += flags[AVX512_FSUPPLEMENTARY_FQCFAIL_1];
+    user_flags[FLAGSTAT_BIT12_OFF + 0]           += flags[AVX512_BIT12_FQCFAIL_0];
+    user_flags[FLAGSTAT_BIT12_OFF + 16]          += flags[AVX512_BIT12_FQCFAIL_1];
+    user_flags[FLAGSTAT_BIT13_OFF + 0]           += flags[AVX512_BIT13_FQCFAIL_0];
+    user_flags[FLAGSTAT_BIT13_OFF + 16]          += flags[AVX512_BIT13_FQCFAIL_1];
+    user_flags[FLAGSTAT_BIT14_OFF + 0]           += flags[AVX512_BIT14_FQCFAIL_0];
+    user_flags[FLAGSTAT_BIT14_OFF + 16]          += flags[AVX512_BIT14_FQCFAIL_1];
+    user_flags[FLAGSTAT_FREAD1_OFF + 0]          += flags[AVX512_FREAD1_FQCFAIL_0];
+    user_flags[FLAGSTAT_FREAD1_OFF + 16]         += flags[AVX512_FREAD1_FQCFAIL_1];
+    user_flags[FLAGSTAT_FREAD2_OFF + 0]          += flags[AVX512_FREAD2_FQCFAIL_0];
+    user_flags[FLAGSTAT_FREAD2_OFF + 16]         += flags[AVX512_FREAD2_FQCFAIL_1];
+
+    return 0;
+}
+#undef AVX512_BIT12_FQCFAIL_0
+#undef AVX512_BIT12_FQCFAIL_1
+#undef AVX512_BIT13_FQCFAIL_0
+#undef AVX512_BIT13_FQCFAIL_1
+#undef AVX512_BIT14_FQCFAIL_0
+#undef AVX512_BIT14_FQCFAIL_1
+#undef AVX512_FREAD1_FQCFAIL_0
+#undef AVX512_FREAD2_FQCFAIL_0
+#undef AVX512_FREAD1_FQCFAIL_1
+#undef AVX512_FREAD2_FQCFAIL_1
+#undef AVX512_FSECONDARY_FQCFAIL_0
+#undef AVX512_FSECONDARY_FQCFAIL_1
+#undef AVX512_FDUP_FQCFAIL_0
+#undef AVX512_FDUP_FQCFAIL_1
+#undef AVX512_FSUPPLEMENTARY_FQCFAIL_0
+#undef AVX512_FSUPPLEMENTARY_FQCFAIL_1
 #endif // end AVX512
 
 /* *************************************

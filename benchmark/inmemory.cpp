@@ -81,6 +81,9 @@ public:
 
             uint32_t avx512_improved3[32];
             const uint64_t time_avx512_improved3 = run("AVX512 improved 3", FLAGSTAT_avx512_improved3, avx512_improved3, scalar);
+
+            uint32_t avx512_improved4[32];
+            const uint64_t time_avx512_improved4 = run("AVX512 improved 4", FLAGSTAT_avx512_improved4, avx512_improved4, scalar);
         }
     #endif
     }

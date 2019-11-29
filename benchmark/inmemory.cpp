@@ -59,18 +59,17 @@ public:
         run("scalar", FLAGSTAT_scalar, scalar);
 
  #if defined(STORM_HAVE_SSE42)
-        if ((cpuid & STORM_CPUID_runtime_bit_SSE42)) {
+        if (cpuid & STORM_CPUID_runtime_bit_SSE42) {
             uint32_t sse4[32];
             const uint64_t time_sse4 = run("SSE4", FLAGSTAT_sse4, sse4);
 
             uint32_t sse4_improved[32];
             run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4, time_sse4);
         }
-    // }
 #endif
 
     #if defined(STORM_HAVE_AVX512)
-        if ((cpuid & STORM_CPUID_runtime_bit_AVX512BW)) {
+        if (cpuid & STORM_CPUID_runtime_bit_AVX512BW) {
             uint32_t avx512[32];
             const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, scalar);
 
@@ -79,6 +78,9 @@ public:
 
             uint32_t avx512_improved2[32];
             const uint64_t time_avx512_improved2 = run("AVX512 improved 2", FLAGSTAT_avx512_improved2, avx512_improved2, scalar, time_avx512_improved);
+
+            uint32_t avx512_improved3[32];
+            const uint64_t time_avx512_improved3 = run("AVX512 improved 3", FLAGSTAT_avx512_improved3, avx512_improved3, scalar);
         }
     #endif
     }
@@ -159,7 +161,17 @@ private:
             FLAGSTAT_BIT13_OFF,
             FLAGSTAT_BIT14_OFF,
             FLAGSTAT_FUNMAP_OFF,
-            FLAGSTAT_FDUP_OFF
+            FLAGSTAT_FDUP_OFF,
+            FLAGSTAT_FQCFAIL_OFF + 16,
+            FLAGSTAT_FSECONDARY_OFF + 16,
+            FLAGSTAT_FSUPPLEMENTARY_OFF + 16,
+            FLAGSTAT_BIT12_OFF + 16,
+            FLAGSTAT_FREAD1_OFF + 16,
+            FLAGSTAT_FREAD2_OFF + 16,
+            FLAGSTAT_BIT13_OFF + 16,
+            FLAGSTAT_BIT14_OFF + 16,
+            FLAGSTAT_FUNMAP_OFF + 16,
+            FLAGSTAT_FDUP_OFF + 16,
         };
 
         for (const int index: tested_counters) {

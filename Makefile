@@ -68,6 +68,6 @@ instrumented_benchmark_align64 : linux/instrumented_benchmark.cpp
 
 clean:
 	rm -f $(OBJECTS)
-	rm -f bench bench.o utility generate instrumented_benchmark instrumented_benchmark_align64
+	rm -f bench bench.o utility generate instrumented_benchmark instrumented_benchmark_align64 inmemory
 
 .PHONY: all clean

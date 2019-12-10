@@ -498,19 +498,22 @@ int FLAGSTAT_sse4_improved(const uint16_t* array, uint32_t len, uint32_t* flags)
             must be done only for the higer byte of 16-bit word, the lower
             byte must be zeroed. Such a transformed input must be or-ed with
             the input word.
-                               FLAGSTAT_FMUNMAP
-                               |FLAGSTAT_FUNMAP
-                               ||FLAGSTAT_FPROPER_PAIR
-                               |||FLAGSTAT_FPAIRED
-                               ||||
-            input word:  [0000|xxxx|1000|0000]
-                                    |
-                                    forces zeoring
+                                         FLAGSTAT_FMUNMAP
+                                         |FLAGSTAT_FUNMAP
+                                         ||FLAGSTAT_FPROPER_PAIR
+                                         |||FLAGSTAT_FPAIRED
+                                         ||||
+            input word:  [0000|0000|0000|xxxx] -- simple bitand to mask higher bits
+
                            bit14
                            |bit13
                            ||bit12
                            |||
-            output word: [0abc|0000|0000|0000]
+            output word: [0abc|0000|0000|0000] -- shuffle followed by shift left
+
+            Please note that for all the flags equal zero, also bits 12..14 are
+            also zero. Thus byte shuffle operation on the zeroed higher byte
+            does not alter that byte.
         */
         // The original SAMtools method is also heavily branched with three
         // main branch points:
@@ -547,14 +550,12 @@ int FLAGSTAT_sse4_improved(const uint16_t* array, uint32_t len, uint32_t* flags)
         // the one vector (00...1).
 
 #define W(j) __m128i data##j = _mm_loadu_si128(data + i + j);
-#define O1(j) const __m128i complete_index##j = \
-                (_mm_slli_epi16(data##j, 8) & _mm_set1_epi16(0x0f00)) | _mm_set1_epi16(0x0080);
-#define O2(j) data##j = data##j | _mm_shuffle_epi8(complete_bits_lookup, complete_index##j);
-#define O3(j) 
+#define O1(j) const __m128i complete_index##j = _mm_and_si128(data##j, _mm_set1_epi16(0x000f));
+#define O2(j) data##j = data##j | _mm_slli_epi16(_mm_shuffle_epi8(complete_bits_lookup, complete_index##j), 8);
 #define L1(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m1), zero) | m1S);
 #define L2(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m2), zero) | m2S);
 #define L3(j) data##j = data##j & (_mm_cmpeq_epi16((data##j & m3), m3)   | m2S);
-#define LOAD(j) W(j) O1(j) O2(j) O3(j) L1(j) L2(j) L3(j)
+#define LOAD(j) W(j) O1(j) O2(j) L1(j) L2(j) L3(j)
 #define L(j)  data##j & _mm_cmpeq_epi16( data##j & m4, zero )
 #define LU(j) data##j & _mm_cmpeq_epi16( data##j & m4, m4 )
         
@@ -615,7 +616,6 @@ int FLAGSTAT_sse4_improved(const uint16_t* array, uint32_t len, uint32_t* flags)
 #undef W
 #undef O1
 #undef O2
-#undef O3
 #undef L1
 #undef L2
 #undef L3
@@ -1016,9 +1016,8 @@ int FLAGSTAT_avx2_improved(const uint16_t* array, uint32_t len, uint32_t* flags)
             thislimit = i + (1 << 16) - 1;
 
 #define W(j) __m256i data##j = _mm256_loadu_si256(data + i + j);
-#define O1(j) const __m256i complete_index##j = \
-                (_mm256_slli_epi16(data##j, 8) & _mm256_set1_epi16(0x0f00)) | _mm256_set1_epi16(0x0080);
-#define O2(j) data##j = data##j | _mm256_shuffle_epi8(complete_bits_lookup, complete_index##j);
+#define O1(j) const __m256i complete_index##j = _mm256_and_si256(data##j, _mm256_set1_epi16(0x000f));
+#define O2(j) data##j = data##j | _mm256_slli_epi16(_mm256_shuffle_epi8(complete_bits_lookup, complete_index##j), 8);
 #define L1(j) data##j = data##j & (_mm256_cmpeq_epi16((data##j & m1), zero) | m1S);
 #define L2(j) data##j = data##j & (_mm256_cmpeq_epi16((data##j & m2), zero) | m2S);
 #define L3(j) data##j = data##j & (_mm256_cmpeq_epi16((data##j & m3), m3)   | m2S);

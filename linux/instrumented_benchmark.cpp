@@ -479,7 +479,7 @@ bool benchmarkMemoryCopy(const std::string& fn_name, uint32_t n, uint32_t m, uin
         vdata[i] = (uint16_t*)STORM_aligned_malloc(best_alignment, n*sizeof(uint16_t));
     STORM_ALIGN(64) uint16_t* dst = (uint16_t*)STORM_aligned_malloc(best_alignment, n*sizeof(uint16_t*));
         
-    printf("alignments: %d\n", best_alignment);
+    if (!tabular) printf("alignments: %d\n", best_alignment);
 
     evts.push_back(PERF_COUNT_HW_CPU_CYCLES);
     evts.push_back(PERF_COUNT_HW_INSTRUCTIONS);

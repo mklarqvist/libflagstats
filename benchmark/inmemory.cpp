@@ -58,7 +58,7 @@ public:
         uint32_t scalar[32];
         run("scalar", FLAGSTAT_scalar, scalar);
 
- #if defined(STORM_HAVE_SSE42)
+#if defined(STORM_HAVE_SSE42)
         if (cpuid & STORM_CPUID_runtime_bit_SSE42) {
             uint32_t sse4[32];
             const uint64_t time_sse4 = run("SSE4", FLAGSTAT_sse4, sse4);
@@ -68,7 +68,17 @@ public:
         }
 #endif
 
-    #if defined(STORM_HAVE_AVX512)
+#if defined(STORM_HAVE_AVX2)
+        if (cpuid & STORM_CPUID_runtime_bit_AVX2) {
+            uint32_t avx2[32];
+            const uint64_t time_avx2 = run("AVX2", FLAGSTAT_avx2, avx2);
+
+            uint32_t avx2_improved[32];
+            run("AVX2 improved", FLAGSTAT_avx2_improved, avx2_improved, avx2, time_avx2);
+        }
+#endif
+
+#if defined(STORM_HAVE_AVX512)
         if (cpuid & STORM_CPUID_runtime_bit_AVX512BW) {
             uint32_t avx512[32];
             const uint64_t time_avx512 = run("AVX512", FLAGSTAT_avx512, avx512, scalar);
@@ -85,7 +95,7 @@ public:
             uint32_t avx512_improved4[32];
             const uint64_t time_avx512_improved4 = run("AVX512 improved 4", FLAGSTAT_avx512_improved4, avx512_improved4, scalar);
         }
-    #endif
+#endif
     }
 
 private:

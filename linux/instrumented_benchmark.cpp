@@ -338,29 +338,11 @@ bool benchmarkMany(const std::string& fn_name, uint32_t n, uint32_t m, uint32_t 
 
 bool benchmarkManyMemoryOptimized(const std::string& fn_name, uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func fn, bool verbose, bool test, bool tabular) {
     std::vector<int> evts;
-// #ifdef ALIGN
-//     std::vector<std::vector<uint16_t,AlignedSTLAllocator<uint16_t,64>>> vdata(m, std::vector<uint16_t,AlignedSTLAllocator<uint16_t,64>>(n));
-// #else
-//     std::vector<std::vector<uint16_t>> vdata(m, std::vector<uint16_t>(n));
-// #endif
-// #ifdef ALIGN
-//     for(auto & x : vdata) {
-//       assert(get_alignment(x.data()) == 64);
-//     }
-// #endif
 
     const uint32_t best_alignment = STORM_get_alignment();
     STORM_ALIGN(64) uint16_t** vdata = (uint16_t**)STORM_aligned_malloc(best_alignment, m*sizeof(uint16_t*));
     for (int i = 0; i < m; ++i)
         vdata[i] = (uint16_t*)STORM_aligned_malloc(best_alignment, n*sizeof(uint16_t));
-
-    // if(verbose) {
-    //   printf("alignments: ");
-    //   for(auto & x : vdata) {
-    //     printf("%d ", get_alignment(x.data()));
-    //   }
-    //   printf("\n");
-    // }
 
     if (!tabular) printf("alignments: %d\n", best_alignment);
 
@@ -505,8 +487,6 @@ bool benchmarkMemoryCopy(const std::string& fn_name, uint32_t n, uint32_t m, uin
             }
         }
 
-        // std::vector<std::vector<uint32_t>> flags(m, std::vector<uint32_t>(16*2));
-        
         const clockdef t1 = std::chrono::high_resolution_clock::now();
         unified.start();
         for (size_t k = 0; k < m ; k++) {
@@ -700,6 +680,14 @@ int main(int argc, char **argv) {
             if (!tabular) printf("libflagstats-sse4.2-optimized\t");
             fflush(NULL);
             isok = benchmarkMany("libflagstats-sse4.2-optimized", n, m, iterations, FLAGSTAT_sse4_improved, verbose, true, tabular);
+            if (isok == false) {
+                printf("Problem detected with %u.\n", 0);
+            }
+            if (verbose && !tabular) printf("\n");
+
+            if (!tabular) printf("libflagstats-sse4.2-optimized2\t");
+            fflush(NULL);
+            isok = benchmarkMany("libflagstats-sse4.2-optimized2", n, m, iterations, FLAGSTAT_sse4_improved2, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 0);
             }

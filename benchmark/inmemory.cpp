@@ -6,12 +6,12 @@
 #include <random>
 #include <vector>
 
-#include "libalgebra.h" // pospopcnt
-
 // force flagstats to define all implementations
 #define STORM_HAVE_AVX2
 #define STORM_HAVE_AVX512
 #define STORM_HAVE_SSE42
+
+#include "libalgebra.h" // pospopcnt
 #include "../libflagstats.h" // flagstats
 
 using Clock = std::chrono::high_resolution_clock;
@@ -65,6 +65,9 @@ public:
 
             uint32_t sse4_improved[32];
             run("SSE4 improved", FLAGSTAT_sse4_improved, sse4_improved, sse4, time_sse4);
+
+            uint32_t sse4_improved2[32];
+            run("SSE4 improved 2", FLAGSTAT_sse4_improved2, sse4_improved2, sse4, time_sse4);
         }
 #endif
 

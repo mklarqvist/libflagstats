@@ -14,6 +14,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "libflagstats.h"
 #include "linux-perf-events.h"
@@ -25,6 +26,9 @@
 #else
 #   define memory_allocate(size) malloc(size)
 #endif
+
+// Definition for microsecond timer.
+typedef std::chrono::high_resolution_clock::time_point clockdef;
 
 // FLAGSTATS_func methods[] = {FLAGSTAT_sse4, FLAGSTAT_avx2, FLAGSTAT_avx512};
 
@@ -237,7 +241,7 @@ bool benchmark(uint32_t n, uint32_t iterations, FLAGSTATS_func fn, bool verbose,
  * @return           Returns true if the results are correct. Returns false if the results
  *                   are either incorrect or the target function is not supported.
  */
-bool benchmarkMany(uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func fn, bool verbose, bool test) {
+bool benchmarkMany(const std::string& fn_name, uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func fn, bool verbose, bool test, bool tabular) {
     std::vector<int> evts;
 #ifdef ALIGN
     std::vector<std::vector<uint16_t,AlignedSTLAllocator<uint16_t,64>>> vdata(m, std::vector<uint16_t,AlignedSTLAllocator<uint16_t,64>>(n));
@@ -249,7 +253,7 @@ bool benchmarkMany(uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func f
       assert(get_alignment(x.data()) == 64);
     }
 #endif
-    if(verbose) {
+    if(verbose && !tabular) {
       printf("alignments: ");
       for(auto & x : vdata) {
         printf("%d ", get_alignment(x.data()));
@@ -265,6 +269,7 @@ bool benchmarkMany(uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func f
     LinuxEvents<PERF_TYPE_HARDWARE> unified(evts);
     std::vector<unsigned long long> results; // tmp buffer
     std::vector< std::vector<unsigned long long> > allresults;
+    std::vector<uint32_t> times;
     results.resize(evts.size());
     
     std::random_device rd;
@@ -280,19 +285,39 @@ bool benchmarkMany(uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func f
         }
 
         std::vector<std::vector<uint32_t>> flags(m,std::vector<uint32_t>(16*2));
-        
+
+        const clockdef t1 = std::chrono::high_resolution_clock::now();
         unified.start();
         for (size_t k = 0; k < m ; k++) {
-          fn(vdata[k].data(), vdata[k].size(), flags[k].data());
+            fn(vdata[k].data(), vdata[k].size(), flags[k].data());
         }
         unified.end(results);
+        const clockdef t2 = std::chrono::high_resolution_clock::now();
         allresults.push_back(results);
+
+        const auto time_span = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1);
+        times.push_back(time_span.count());
     }
+
+    uint32_t tot_time = std::accumulate(times.begin(), times.end(), 0);
+    double mean_time = tot_time / times.size();
 
     std::vector<unsigned long long> mins = compute_mins(allresults);
     std::vector<double> avg = compute_averages(allresults);
+
+    double throughput = ((2*n) / (1024*1024.0)) / (mean_time / 1000000000.0);
     
-    if (verbose) {
+    if (tabular) {
+        for (int i = 0; i < iterations; ++i) {
+            throughput = ((2*n) / (1024*1024.0)) / (times[i] / 1000000000.0);
+            printf("%s\t%u\t%d\t", fn_name.c_str(), n, i);
+            printf("%4.2f\t%4.3f\t%4.3f\t",
+                    double(allresults[i][1]) / allresults[i][0], double(allresults[i][0]) / (n*m), double(allresults[i][1]) / (n*m));
+            printf("%llu\t%llu\t%llu\t%llu\t%llu\t",
+                    allresults[i][0], allresults[i][1], allresults[i][2], allresults[i][3], allresults[i][4]);
+            printf("%u\t%4.2f\n", times[i], throughput);
+        }
+    } else if (verbose) {
         printf("instructions per cycle %4.2f, cycles per 16-bit word:  %4.3f, "
                "instructions per 16-bit word %4.3f \n",
                 double(mins[1]) / mins[0], double(mins[0]) / (n*m), double(mins[1]) / (n*m));
@@ -303,6 +328,7 @@ bool benchmarkMany(uint32_t n, uint32_t m, uint32_t iterations, FLAGSTATS_func f
         printf("avg: %8.1f cycles, %8.1f instructions, \t%8.1f branch mis., %8.1f "
                "cache ref., %8.1f cache mis.\n",
                 avg[0], avg[1], avg[2], avg[3], avg[4]);
+        printf("avg time: %f ns, %4.2f mb/s\n", mean_time, throughput);
     } else {
         printf("cycles per 16-bit word:  %4.3f; ref cycles per 16-bit word: %4.3f \n", double(mins[0]) / (n*m), double(mins[5]) / (n*m));
     }
@@ -336,7 +362,7 @@ bool benchmarkManyMemoryOptimized(const std::string& fn_name, uint32_t n, uint32
     //   printf("\n");
     // }
 
-    printf("alignments: %d\n", best_alignment);
+    if (!tabular) printf("alignments: %d\n", best_alignment);
 
     evts.push_back(PERF_COUNT_HW_CPU_CYCLES);
     evts.push_back(PERF_COUNT_HW_INSTRUCTIONS);
@@ -464,6 +490,7 @@ bool benchmarkMemoryCopy(const std::string& fn_name, uint32_t n, uint32_t m, uin
     LinuxEvents<PERF_TYPE_HARDWARE> unified(evts);
     std::vector<unsigned long long> results; // tmp buffer
     std::vector< std::vector<unsigned long long> > allresults;
+    std::vector<uint32_t> times;
     results.resize(evts.size());
     
     std::random_device rd;
@@ -480,18 +507,38 @@ bool benchmarkMemoryCopy(const std::string& fn_name, uint32_t n, uint32_t m, uin
 
         // std::vector<std::vector<uint32_t>> flags(m, std::vector<uint32_t>(16*2));
         
+        const clockdef t1 = std::chrono::high_resolution_clock::now();
         unified.start();
         for (size_t k = 0; k < m ; k++) {
             memcpy(dst, vdata[k], n*sizeof(uint16_t));
         }
         unified.end(results);
+        const clockdef t2 = std::chrono::high_resolution_clock::now();
         allresults.push_back(results);
+
+        const auto time_span = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1);
+        times.push_back(time_span.count());
     }
+    
+    uint32_t tot_time = std::accumulate(times.begin(), times.end(), 0);
+    double mean_time = tot_time / times.size();
 
     std::vector<unsigned long long> mins = compute_mins(allresults);
     std::vector<double> avg = compute_averages(allresults);
+
+    double throughput = ((2*n) / (1024*1024.0)) / (mean_time / 1000000000.0);
     
-    if (verbose) {
+    if (tabular) {
+        for (int i = 0; i < iterations; ++i) {
+            throughput = ((2*n) / (1024*1024.0)) / (times[i] / 1000000000.0);
+            printf("%s\t%u\t%d\t", fn_name.c_str(), n, i);
+            printf("%4.2f\t%4.3f\t%4.3f\t",
+                    double(allresults[i][1]) / allresults[i][0], double(allresults[i][0]) / (n*m), double(allresults[i][1]) / (n*m));
+            printf("%llu\t%llu\t%llu\t%llu\t%llu\t",
+                    allresults[i][0], allresults[i][1], allresults[i][2], allresults[i][3], allresults[i][4]);
+            printf("%u\t%4.2f\n", times[i], throughput);
+        }
+    } else if (verbose) {
         printf("instructions per cycle %4.2f, cycles per 16-bit word:  %4.3f, "
                "instructions per 16-bit word %4.3f \n",
                 double(mins[1]) / mins[0], double(mins[0]) / (n*m), double(mins[1]) / (n*m));
@@ -502,19 +549,12 @@ bool benchmarkMemoryCopy(const std::string& fn_name, uint32_t n, uint32_t m, uin
         printf("avg: %8.1f cycles, %8.1f instructions, \t%8.1f branch mis., %8.1f "
                "cache ref., %8.1f cache mis.\n",
                 avg[0], avg[1], avg[2], avg[3], avg[4]);
+        printf("avg time: %f ns, %4.2f mb/s\n", mean_time, throughput);
     } else {
         printf("cycles per 16-bit word:  %4.3f; ref cycles per 16-bit word: %4.3f \n", double(mins[0]) / (n*m), double(mins[5]) / (n*m));
     }
 
-    if (tabular) {
-        for (int i = 0; i < iterations; ++i) {
-            printf("%s\t%d\t", fn_name.c_str(), i);
-            printf("%4.2f\t%4.3f\t%4.3f\t",
-                    double(allresults[i][1]) / allresults[i][0], double(allresults[i][0]) / (n*m), double(allresults[i][1]) / (n*m));
-            printf("%llu\t%llu\t%llu\t%llu\t%llu\n",
-                    allresults[i][0], allresults[i][1], allresults[i][2], allresults[i][3], allresults[i][4]);
-        }
-    }
+    return isok;
 
     for (int i = 0; i < m; ++i) STORM_aligned_free(vdata[i]);
     STORM_aligned_free(vdata);
@@ -598,7 +638,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    measureoverhead(n*m, iterations, verbose);
+    if (!tabular) measureoverhead(n*m, iterations, verbose);
 
 #if defined(STORM_HAVE_CPUID)
     #if defined(__cplusplus)
@@ -621,7 +661,7 @@ int main(int argc, char **argv) {
 
     if (!tabular) printf("libflagstats-scalar\t");
     fflush(NULL);
-    bool isok = benchmarkMany(n, m, iterations, FLAGSTAT_scalar, verbose, true);
+    bool isok = benchmarkMany("libflagstats-scalar", n, m, iterations, FLAGSTAT_scalar, verbose, true, tabular);
     if (isok == false) {
         printf("Problem detected with %u.\n", 0);
     }
@@ -630,7 +670,7 @@ int main(int argc, char **argv) {
 
     if (!tabular) printf("samtools\t");
     fflush(NULL);
-    isok = benchmarkMany(n, m, iterations, samtools_flagstats, verbose, true);
+    isok = benchmarkMany("samtools", n, m, iterations, samtools_flagstats, verbose, true, tabular);
     if (isok == false) {
         printf("Problem detected with %u.\n", 0);
     }
@@ -651,7 +691,7 @@ int main(int argc, char **argv) {
         if ((cpuid & STORM_CPUID_runtime_bit_SSE42)) {
             if (!tabular) printf("libflagstats-sse4.2\t");
             fflush(NULL);
-            bool isok = benchmarkMany(n, m, iterations, FLAGSTAT_sse4, verbose, true);
+            bool isok = benchmarkMany("libflagstats-sse4.2", n, m, iterations, FLAGSTAT_sse4, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 0);
             }
@@ -659,20 +699,11 @@ int main(int argc, char **argv) {
 
             if (!tabular) printf("libflagstats-sse4.2-optimized\t");
             fflush(NULL);
-            isok = benchmarkMany(n, m, iterations, FLAGSTAT_sse4_improved, verbose, true);
+            isok = benchmarkMany("libflagstats-sse4.2-optimized", n, m, iterations, FLAGSTAT_sse4_improved, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 0);
             }
             if (verbose && !tabular) printf("\n");
-
-            if (!tabular) printf("libflagstats-sse4.2-optimized-aligned\t");
-            fflush(NULL);
-            isok = benchmarkManyMemoryOptimized("libflagstats-sse4.2-optimized-aligned", n, m, iterations, FLAGSTAT_sse4_improved, verbose, true, tabular);
-            if (isok == false) {
-                printf("Problem detected with %u.\n", 1);
-            }
-            if (verbose && !tabular)
-                printf("\n");
         }
     // }
     #endif
@@ -681,16 +712,7 @@ int main(int argc, char **argv) {
         if ((cpuid & STORM_CPUID_runtime_bit_AVX2)) {
             if (!tabular) printf("libflagstats-avx2\t");
             fflush(NULL);
-            bool isok = benchmarkMany(n, m, iterations, FLAGSTAT_avx2, verbose, true);
-            if (isok == false) {
-                printf("Problem detected with %u.\n", 1);
-            }
-            if (verbose && !tabular)
-                printf("\n");
-
-            if (!tabular) printf("libflagstats-avx2-aligned\t");
-            fflush(NULL);
-            isok = benchmarkManyMemoryOptimized("libflagstats-avx2-aligned", n, m, iterations, FLAGSTAT_avx2, verbose, true, tabular);
+            bool isok = benchmarkMany("libflagstats-avx2", n, m, iterations, FLAGSTAT_avx2, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 1);
             }
@@ -704,7 +726,7 @@ int main(int argc, char **argv) {
         if ((cpuid & STORM_CPUID_runtime_bit_AVX512BW)) {
             if (!tabular) printf("libflagstats-avx512bw\t");
             fflush(NULL);
-            bool isok = benchmarkMany(n, m, iterations, FLAGSTAT_avx512, verbose, true);
+            bool isok = benchmarkMany("libflagstats-avx512bw", n, m, iterations, FLAGSTAT_avx512, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 2);
             }
@@ -712,7 +734,7 @@ int main(int argc, char **argv) {
 
             if (!tabular) printf("libflagstats-avx512bw-improved\t");
             fflush(NULL);
-            isok = benchmarkMany(n, m, iterations, FLAGSTAT_avx512_improved, verbose, true);
+            isok = benchmarkMany("libflagstats-avx512bw-improved", n, m, iterations, FLAGSTAT_avx512_improved, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 2);
             }
@@ -720,7 +742,7 @@ int main(int argc, char **argv) {
 
             if (!tabular) printf("libflagstats-avx512bw-improved2\t");
             fflush(NULL);
-            isok = benchmarkMany(n, m, iterations, FLAGSTAT_avx512_improved2, verbose, true);
+            isok = benchmarkMany("libflagstats-avx512bw-improved2", n, m, iterations, FLAGSTAT_avx512_improved2, verbose, true, tabular);
             if (isok == false) {
                 printf("Problem detected with %u.\n", 2);
             }

@@ -78,6 +78,9 @@ public:
 
             uint32_t avx2_improved[32];
             run("AVX2 improved", FLAGSTAT_avx2_improved, avx2_improved, avx2, time_avx2);
+
+            uint32_t avx2_improved2[32];
+            run("AVX2 improved2", FLAGSTAT_avx2_improved2, avx2_improved2, avx2, time_avx2);
         }
 #endif
 

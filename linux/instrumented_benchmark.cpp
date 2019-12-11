@@ -713,6 +713,14 @@ int main(int argc, char **argv) {
                 printf("Problem detected with %u.\n", 1);
             }
             if (verbose && !tabular) printf("\n");
+
+            if (!tabular) printf("libflagstats-avx2-improved2\t");
+            fflush(NULL);
+            isok = benchmarkMany("libflagstats-avx2-improved2", n, m, iterations, FLAGSTAT_avx2_improved2, verbose, true, tabular);
+            if (isok == false) {
+                printf("Problem detected with %u.\n", 1);
+            }
+            if (verbose && !tabular) printf("\n");
         }
     // }
     #endif

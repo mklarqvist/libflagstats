@@ -1925,9 +1925,9 @@ int FLAGSTAT_avx512_improved(const uint16_t* array, uint32_t len, uint32_t* flag
         */
 
 // We're using 32-bit shifts, as they're faster than 16-bit shifts.
-#define L1(j) const __m512i mask_index##j = \
-                (_mm512_srli_epi32(data##j, 8) & _mm512_set1_epi16(0x0b)) | \
-                (_mm512_slli_epi32(data##j, 2) & _mm512_set1_epi16(0x04));
+#define L1(j) const __m512i mask_index##j = _mm512_maddubs_epi16(           \
+                 _mm512_and_si512(data##j, _mm512_set1_epi16(0x0b01)),      \
+                 _mm512_set1_epi16(0x0104));
 #define L2(j) const __m512i mask_qcfail0_##j = _mm512_permutexvar_epi16(mask_index##j, qcfail_0_lookup);
 #define L3(j) const __m512i mask_qcfail1_##j = _mm512_permutexvar_epi16(mask_index##j, qcfail_1_lookup);
 #define LOAD(j) W(j) O1(j) L1(j) L2(j) L3(j)

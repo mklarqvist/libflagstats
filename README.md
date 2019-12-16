@@ -14,6 +14,9 @@ branched and bit-dependent [SAMtools](https://github.com/samtools/samtools/) cod
 propagate-carry approach that feeds into bit-transposed Harley-Seal-based carry-save adder
 networks.
 
+The positional population count is described in the paper:
+* [Efficient Computation of Positional Population Counts Using SIMD Instructions](https://arxiv.org/abs/1911.02696) by Marcus D. R. Klarqvist and Wojciech Muła and Daniel Lemire
+
 ## Speedup
 
 This benchmark shows the speedup of the pospopcnt algorithms compared to
